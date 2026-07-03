@@ -14,10 +14,26 @@
   #chip { position:fixed; top:calc(9vh + 10px); left:12px; z-index:3; opacity:.85;
     font-size:10px; letter-spacing:.22em; color:var(--brass); text-transform:uppercase; }
 
-  #card { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(9vh + 26px);
+  #card { position:fixed; left:50%; transform:translateX(-50%); top:calc(9vh + 44px);
     z-index:3; max-width:min(86vw, 560px); text-align:center; opacity:0; transition:opacity .8s;
     font: italic 400 clamp(15px, 2.6vw, 21px)/1.5 "Iowan Old Style", Palatino, Georgia, serif;
     color:var(--ink); text-shadow:0 1px 8px rgba(0,0,0,.8); text-wrap:balance; }
+
+  #dlg { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(9vh + 26px);
+    z-index:3; max-width:min(88vw, 600px); text-align:center; opacity:0; transition:opacity .35s; }
+  #dlg .who { font-size:10px; letter-spacing:.2em; color:var(--brass); text-transform:uppercase;
+    margin:0 0 3px; }
+  #dlg .te { margin:0; font: 500 clamp(16px, 3vw, 22px)/1.45 "Noto Sans Telugu", "Nirmala UI",
+    system-ui, sans-serif; color:#fff; text-shadow:0 1px 10px rgba(0,0,0,.9); }
+  #dlg .en { margin:3px 0 0; font: italic 400 12.5px/1.4 Georgia, serif; color:#d8cdb6;
+    text-shadow:0 1px 3px rgba(0,0,0,.95), 0 0 12px rgba(0,0,0,.75); }
+
+  #grain { position:fixed; inset:-120px; pointer-events:none; z-index:2; opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)'/%3E%3C/svg%3E");
+    animation: grain 0.9s steps(4) infinite; }
+  @keyframes grain { 0%{transform:translate(0,0)} 25%{transform:translate(-38px,22px)}
+    50%{transform:translate(24px,-30px)} 75%{transform:translate(-14px,-16px)} 100%{transform:translate(0,0)} }
+  @media (prefers-reduced-motion: reduce){ #grain{animation:none} }
 
   #overlay { position:fixed; inset:0; z-index:5; display:grid; place-items:center;
     background:rgba(4,3,2,.72); transition:opacity .7s; }
@@ -45,10 +61,12 @@
 
 <canvas id="gl"></canvas>
 <div id="vignette"></div>
+<div id="grain"></div>
 <div class="bar-top"></div><div class="bar-bot"></div>
 <div id="fade"></div>
 <p id="chip">Thoranam &middot; Film One</p>
 <p id="card"></p>
+<div id="dlg"><p class="who" id="dlg-who"></p><p class="te" id="dlg-te"></p><p class="en" id="dlg-en"></p></div>
 <div id="transport">
   <span id="clock">0:00 / 2:00</span>
   <input id="scrub" type="range" min="0" max="120" step="0.1" value="0" aria-label="timeline" />
@@ -408,13 +426,36 @@ function buildSail(){
   mb.addQuad([0.26,2.6,0.7],[0.3,3.4,3.5],[0.2,2.2,3.4],[0.3,1.8,1.0],norm3(n));
   return mb;
 }
-function buildBoatman(){
-  const mb=new MB();
-  mb.addBox([0,1.18,-3.1],[0.23,0.36,0.17]);       // torso (dhoti-wrapped)
-  mb.addBox([0,0.78,-3.1],[0.26,0.08,0.2]);        // waist wrap
-  mb.addPrism(0,-3.1,1.56,1.84,0.13,0.11,6);       // head
-  mb.addBox([0,1.88,-3.1],[0.15,0.045,0.15]);      // turban
-  mb.addBox([0.28,1.1,-3.0],[0.06,0.32,0.06],0.3); // arm on pole
+// Veeranna: old boatman standing at the stern — dhoti, bare torso,
+// angavastram over the shoulder, white turban. Vertex-colored.
+function buildVeeranna(){
+  const mb=new MB();mb.colors=[];
+  const paint=(fn,col)=>{const s=mb.positions.length/3;fn();
+    for(let v=s;v<mb.positions.length/3;v++)mb.colors.push(...col);};
+  const SKIN=[0.42,0.26,0.17],CLOTH=[0.88,0.84,0.74],WRAP=[0.62,0.2,0.14];
+  paint(()=>{mb.addBox([0,0.5,-3.1],[0.21,0.5,0.17]);
+    mb.addBox([0,0.98,-3.1],[0.24,0.06,0.2]);},CLOTH);        // dhoti + waist knot
+  paint(()=>{mb.addBox([0,1.32,-3.1],[0.22,0.3,0.15]);
+    mb.addBox([-0.26,1.28,-3.12],[0.06,0.3,0.06],-0.15);},SKIN); // torso + left arm
+  paint(()=>mb.addBox([0.1,1.45,-3.1],[0.2,0.06,0.18],0.5),WRAP); // angavastram
+  paint(()=>mb.addBox([0.3,1.32,-3.0],[0.06,0.34,0.06],0.3),SKIN); // right arm on pole
+  paint(()=>mb.addPrism(0,-3.1,1.66,1.94,0.12,0.1,6),SKIN);   // head
+  paint(()=>{mb.addBox([0,1.98,-3.1],[0.15,0.05,0.15]);
+    mb.addBox([0.12,1.94,-3.02],[0.05,0.04,0.05]);},CLOTH);   // turban + knot
+  return mb;
+}
+// Chinnu: his grandson, sitting cross-legged at the prow beside the lamp.
+function buildChinnu(){
+  const mb=new MB();mb.colors=[];
+  const paint=(fn,col)=>{const s=mb.positions.length/3;fn();
+    for(let v=s;v<mb.positions.length/3;v++)mb.colors.push(...col);};
+  const SKIN=[0.46,0.29,0.19],SHIRT=[0.24,0.4,0.5],HAIR=[0.06,0.05,0.05];
+  paint(()=>mb.addBox([0,0.62,2.9],[0.2,0.12,0.2]),[0.8,0.74,0.6]); // folded legs
+  paint(()=>mb.addBox([0,0.9,2.9],[0.15,0.18,0.11]),SHIRT);   // torso
+  paint(()=>{mb.addBox([0.14,0.88,3.02],[0.04,0.16,0.04],-0.4);
+    mb.addBox([-0.14,0.88,3.02],[0.04,0.16,0.04],0.4);},SKIN); // arms toward the lamp
+  paint(()=>mb.addPrism(0,2.9,1.08,1.3,0.1,0.09,6),SKIN);     // head
+  paint(()=>mb.addBox([0,1.32,2.9],[0.1,0.035,0.1]),HAIR);    // hair
   return mb;
 }
 // punting pole as its own mesh so it can swing — pivot at the hands
@@ -493,12 +534,13 @@ void main(){vec4 w=uModel*vec4(aPos,1.0);vW=w.xyz;vN=mat3(uModel)*aNormal;vC=aCo
 
 const LIT_FS=`#version 300 es
 precision highp float;
-uniform vec4 uColor;uniform float uEmissive,uStrata;uniform vec3 uEye;
+uniform vec4 uColor;uniform float uEmissive,uStrata,uClipBelow,uMist;uniform vec3 uEye;
 uniform vec3 uSun,uSunCol,uAmbG,uAmbS,uHorizon;uniform float uFogD;
 uniform mat4 uLightMat;uniform highp sampler2DShadow uShadow;
 in vec3 vN;in vec3 vW;in vec3 vC;out vec4 frag;
 ${GLSL_COMMON}
 void main(){
+  if(uClipBelow>0.5&&vW.y<0.02)discard; // reflection pass: nothing below the waterline
   vec3 n=normalize(vN);
   vec3 albedo=uColor.rgb*vC;
   albedo*=0.88+0.24*fbm3(vW*1.9);
@@ -518,8 +560,12 @@ void main(){
     float hemi=0.5+0.5*n.y;
     col=albedo*(mix(uAmbG,uAmbS,hemi)+uSunCol*ndl*sh);
   }
-  float fog=1.0-exp(-distance(vW,uEye)*uFogD);
+  float dist=distance(vW,uEye);
+  float fog=1.0-exp(-dist*uFogD);
   col=mix(col,uHorizon*0.55,fog);
+  // low mist hugging the river
+  float mist=uMist*exp(-max(vW.y+0.6,0.0)*0.4)*(1.0-exp(-dist*0.02));
+  col=mix(col,uHorizon*0.72,clamp(mist,0.0,0.55));
   frag=vec4(pow(aces(col),vec3(1.0/2.2)),1.0);
 }`;
 
@@ -542,7 +588,8 @@ void main(){
 const WATER_FS=`#version 300 es
 precision highp float;
 uniform vec3 uEye,uSun,uSunCol,uHorizon,uZenith,uDeep;uniform float uFogD,uTime;
-uniform vec2 uBoat;uniform float uBoatYaw;
+uniform vec2 uBoat;uniform float uBoatYaw,uMist;
+uniform vec2 uRes;uniform sampler2D uRefl;
 uniform mat4 uLightMat;uniform highp sampler2DShadow uShadow;
 in vec3 vW;in vec3 vN;out vec4 frag;
 ${GLSL_COMMON}
@@ -560,7 +607,11 @@ void main(){
   float sh=shadowAt(uShadow,uLightMat,vW,n,uSun);
   float flow=fbm3(vec3(vW.x*0.25,uTime*0.22,vW.z*0.12));
   vec3 base=uDeep*(0.95+0.55*flow);
-  vec3 refl=mix(uHorizon,uZenith,0.6)*0.9;
+  // planar reflection of the world, rippled by the surface normal
+  vec2 sc=gl_FragCoord.xy/uRes;
+  vec3 reflWorld=texture(uRefl,clamp(sc+n.xz*0.055,0.001,0.999)).rgb;
+  vec3 reflSky=mix(uHorizon,uZenith,0.6)*0.9;
+  vec3 refl=mix(reflSky,reflWorld,0.8);
   vec3 col=mix(base,refl,fres);
   vec3 r=reflect(-v,n);
   float glit=pow(max(dot(r,uSun),0.0),160.0)*(0.55+0.45*hashv(floor(vW*7.0)));
@@ -587,8 +638,12 @@ void main(){
   float foam=clamp((shore+white+wake+bow)*churn,0.0,0.85);
   col=mix(col,vec3(0.72,0.75,0.72)*(0.35+0.65*sh)*(uSunCol*0.35+vec3(0.5)),foam);
 
-  float fog=1.0-exp(-distance(vW,uEye)*uFogD);
+  float dist=distance(vW,uEye);
+  float fog=1.0-exp(-dist*uFogD);
   col=mix(col,uHorizon*0.55,fog);
+  // low river mist hugging the water
+  float mist=uMist*exp(-max(vW.y+0.6,0.0)*0.45)*(1.0-exp(-dist*0.02));
+  col=mix(col,uHorizon*0.72,clamp(mist,0.0,0.55));
   frag=vec4(pow(aces(col),vec3(1.0/2.2)),1.0);
 }`;
 
@@ -635,6 +690,7 @@ const skyProg=makeProgram(SKY_VS,SKY_FS);
 const loc=(p,n)=>gl.getUniformLocation(p,n);
 const L={proj:loc(litProg,"uProj"),view:loc(litProg,"uView"),model:loc(litProg,"uModel"),
   color:loc(litProg,"uColor"),emis:loc(litProg,"uEmissive"),strata:loc(litProg,"uStrata"),
+  clipBelow:loc(litProg,"uClipBelow"),mist:loc(litProg,"uMist"),
   eye:loc(litProg,"uEye"),
   sun:loc(litProg,"uSun"),sunCol:loc(litProg,"uSunCol"),ambG:loc(litProg,"uAmbG"),
   ambS:loc(litProg,"uAmbS"),horizon:loc(litProg,"uHorizon"),fogD:loc(litProg,"uFogD"),
@@ -643,7 +699,8 @@ const W={proj:loc(waterProg,"uProj"),view:loc(waterProg,"uView"),time:loc(waterP
   eye:loc(waterProg,"uEye"),sun:loc(waterProg,"uSun"),sunCol:loc(waterProg,"uSunCol"),
   horizon:loc(waterProg,"uHorizon"),zenith:loc(waterProg,"uZenith"),deep:loc(waterProg,"uDeep"),
   fogD:loc(waterProg,"uFogD"),lightMat:loc(waterProg,"uLightMat"),shadow:loc(waterProg,"uShadow"),
-  boat:loc(waterProg,"uBoat"),boatYaw:loc(waterProg,"uBoatYaw")};
+  boat:loc(waterProg,"uBoat"),boatYaw:loc(waterProg,"uBoatYaw"),
+  mist:loc(waterProg,"uMist"),res:loc(waterProg,"uRes"),refl:loc(waterProg,"uRefl")};
 const SH={lightMat:loc(shadowProg,"uLightMat"),model:loc(shadowProg,"uModel")};
 const SK={fwd:loc(skyProg,"uFwd"),right:loc(skyProg,"uRight"),up:loc(skyProg,"uUp"),
   sun:loc(skyProg,"uSun"),sunCol:loc(skyProg,"uSunCol"),horizon:loc(skyProg,"uHorizon"),
@@ -669,7 +726,8 @@ const meshes={
   terrain:upload(buildTerrain()),water:upload(buildWater()),dam:upload(buildDam()),
   stupa:upload(buildStupa()),boulders:upload(buildBoulders()),temple:upload(buildTemple()),
   lamps:upload(buildLamps()),hull:upload(buildHull()),sail:upload(buildSail()),
-  boatman:upload(buildBoatman()),pole:upload(buildPole()),detail:upload(buildBoatDetail()),
+  veeranna:upload(buildVeeranna()),chinnu:upload(buildChinnu()),
+  pole:upload(buildPole()),detail:upload(buildBoatDetail()),
   bowLamp:upload(buildLampBow()),trees:upload(buildTrees()),reeds:upload(buildReeds()),
   birdBody:upload(buildBirdBody()),wing:upload(buildWing()),
 };
@@ -716,15 +774,15 @@ function boatState(t){
 // light/weather stops: dawn → day → golden → dusk
 const stops=[
   {t:0,  sun:[0.85,0.16,0.35],sunCol:[1.35,0.62,0.38],hor:[0.92,0.5,0.32],zen:[0.16,0.17,0.3],
-   ambG:[0.16,0.12,0.12],ambS:[0.3,0.28,0.38],deep:[0.07,0.1,0.14],fog:0.0035},
+   ambG:[0.16,0.12,0.12],ambS:[0.3,0.28,0.38],deep:[0.07,0.1,0.14],fog:0.0035,mist:0.5},
   {t:42, sun:[0.5,0.72,0.3], sunCol:[1.35,1.18,0.95],hor:[0.6,0.66,0.72],zen:[0.22,0.4,0.64],
-   ambG:[0.2,0.17,0.14],ambS:[0.42,0.48,0.58],deep:[0.07,0.16,0.17],fog:0.002},
+   ambG:[0.2,0.17,0.14],ambS:[0.42,0.48,0.58],deep:[0.07,0.16,0.17],fog:0.002,mist:0.08},
   {t:84, sun:[-0.5,0.3,0.28],sunCol:[1.5,0.85,0.42],hor:[0.95,0.5,0.22],zen:[0.15,0.19,0.36],
-   ambG:[0.2,0.14,0.1],ambS:[0.36,0.34,0.46],deep:[0.1,0.1,0.11],fog:0.0028},
+   ambG:[0.2,0.14,0.1],ambS:[0.36,0.34,0.46],deep:[0.1,0.1,0.11],fog:0.0028,mist:0.22},
   {t:104,sun:[-0.6,0.14,0.24],sunCol:[1.0,0.44,0.3], hor:[0.6,0.28,0.28],zen:[0.06,0.07,0.17],
-   ambG:[0.1,0.08,0.09],ambS:[0.2,0.18,0.3],deep:[0.03,0.035,0.05],fog:0.0032},
+   ambG:[0.1,0.08,0.09],ambS:[0.2,0.18,0.3],deep:[0.03,0.035,0.05],fog:0.0032,mist:0.42},
   {t:120,sun:[-0.62,0.1,0.22],sunCol:[0.7,0.3,0.22], hor:[0.42,0.2,0.24],zen:[0.035,0.04,0.12],
-   ambG:[0.07,0.06,0.08],ambS:[0.13,0.12,0.22],deep:[0.02,0.025,0.04],fog:0.0038},
+   ambG:[0.07,0.06,0.08],ambS:[0.13,0.12,0.22],deep:[0.02,0.025,0.04],fog:0.0038,mist:0.5},
 ];
 function weather(t){
   let a=stops[0],b=stops[stops.length-1];
@@ -732,7 +790,7 @@ function weather(t){
   const u=smooth(a.t,b.t,t);
   return{sun:norm3(lerp3(a.sun,b.sun,u)),sunCol:lerp3(a.sunCol,b.sunCol,u),
     hor:lerp3(a.hor,b.hor,u),zen:lerp3(a.zen,b.zen,u),ambG:lerp3(a.ambG,b.ambG,u),
-    ambS:lerp3(a.ambS,b.ambS,u),deep:lerp3(a.deep,b.deep,u),fog:lerp(a.fog,b.fog,u),
+    ambS:lerp3(a.ambS,b.ambS,u),deep:lerp3(a.deep,b.deep,u),fog:lerp(a.fog,b.fog,u),mist:lerp(a.mist,b.mist,u),
     lamp:smooth(85,100,t)};
 }
 
@@ -764,13 +822,33 @@ function camera(t){
 
 const cards=[
   {t0:4,t1:11,text:'కృష్ణవేణి — <b>Krishnaveni</b>'},
-  {t0:13,t1:23,text:'Nagarjuna Sagar. Before the sun, Veeranna unties his grandfather’s boat.'},
-  {t0:27,t1:37,text:'Past the drowned city of the Buddha…'},
-  {t0:43,t1:56,text:'…into the Nallamala, where the river remembers being wild.'},
-  {t0:62,t1:72,text:'The gorge tests every boat it lets through.'},
-  {t0:78,t1:87,text:'And rewards the ones that hold.'},
-  {t0:93,t1:106,text:'Srisailam. Mallikarjuna’s lamp above the water.'},
+  {t0:43,t1:54,text:'The Nallamala, where the river remembers being wild.'},
+  {t0:88,t1:93,text:'Srisailam.'},
   {t0:112,t1:119,text:'Some journeys go against the current.<br>Those are the ones worth telling.'},
+];
+
+// Telugu dialogue between grandfather and grandson, subtitled in English.
+const DIALOGUE=[
+  {t0:14,t1:19,who:'చిన్ను · Chinnu',te:'తాతయ్యా, ఇంత చీకట్లోనే బయలుదేరాలా?',
+    en:'Grandpa, must we leave while it’s still dark?'},
+  {t0:19.5,t1:24.5,who:'వీరన్న · Veeranna',te:'నది నిద్ర లేచే ముందే మనం నీళ్ళలో ఉండాలి రా.',
+    en:'We must be on the water before the river wakes.'},
+  {t0:29,t1:34,who:'చిన్ను · Chinnu',te:'అదిగో! నీళ్ళ కింద బుద్ధుడి ఊరు!',
+    en:'Look! The Buddha’s town beneath the water!'},
+  {t0:34.5,t1:39.5,who:'వీరన్న · Veeranna',te:'అవును… నది అన్నీ గుర్తు పెట్టుకుంటుంది.',
+    en:'Yes… the river remembers everything.'},
+  {t0:56,t1:60.5,who:'వీరన్న · Veeranna',te:'గట్టిగా పట్టుకో! కొండలు మొదలయ్యాయి.',
+    en:'Hold tight! The hills have begun.'},
+  {t0:63,t1:67,who:'చిన్ను · Chinnu',te:'తాతయ్యా! అలలు!',
+    en:'Grandpa! The waves!'},
+  {t0:67.5,t1:72.5,who:'వీరన్న · Veeranna',te:'భయపడకు! ఎదురీత మనకు కొత్త కాదు!',
+    en:'Don’t be afraid! Going against the current is nothing new for us!'},
+  {t0:79,t1:85,who:'వీరన్న · Veeranna',te:'చూశావా? నది పరీక్ష పెడుతుంది… తట్టుకున్న వాళ్ళను దీవిస్తుంది.',
+    en:'You see? The river tests you… and blesses those who hold on.'},
+  {t0:95,t1:100,who:'చిన్ను · Chinnu',te:'మల్లన్న దీపాలు! చేరుకున్నాం తాతయ్యా!',
+    en:'Mallanna’s lamps! We’ve arrived, grandpa!'},
+  {t0:103,t1:108.5,who:'వీరన్న · Veeranna',te:'ఓం నమః శివాయ. ఎదురీత ముగిసింది రా, చిన్నా.',
+    en:'Om Namah Shivaya. The upstream journey is done, little one.'},
 ];
 
 // ============================== audio ====================================
@@ -815,6 +893,24 @@ function chirp(){
   og.gain.setValueAtTime(0.028,t);og.gain.exponentialRampToValueAtTime(0.0001,t+0.14);
   o.connect(og).connect(master);o.start(t);o.stop(t+0.15);
 }
+// --- Telugu speech via the browser's TTS, when a Telugu voice exists ---
+let voiceTe=null,spokenLine=-1;
+try{
+  const pickVoice=()=>{voiceTe=speechSynthesis.getVoices()
+    .find(v=>v.lang&&v.lang.toLowerCase().startsWith("te"))||null;};
+  pickVoice();
+  speechSynthesis.onvoiceschanged=pickVoice;
+}catch(e){}
+function speakTe(text){
+  try{
+    if(!voiceTe)return;
+    const u=new SpeechSynthesisUtterance(text);
+    u.voice=voiceTe;u.lang="te-IN";u.rate=0.95;u.volume=1;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+function hushTe(){try{speechSynthesis.cancel();}catch(e){}}
+
 const bellCues=[92.5,97.5,103.5];
 let nextChirp=26;
 function audioFrame(t,dt){
@@ -844,7 +940,8 @@ playBtn.addEventListener("click",()=>{
   playing=true;
   overlay.classList.add("hidden");
 });
-scrub.addEventListener("input",()=>{t=parseFloat(scrub.value);prevT=t;nextChirp=Math.max(26,t);});
+scrub.addEventListener("input",()=>{t=parseFloat(scrub.value);prevT=t;nextChirp=Math.max(26,t);
+  spokenLine=-1;hushTe();});
 document.addEventListener("visibilitychange",()=>{
   if(AC)document.hidden?AC.suspend():AC.resume();
 });
@@ -873,7 +970,9 @@ function drawList(t,B){
     {m:meshes.hull,model:boatM,color:[0.36,0.24,0.14,1],emis:0,cast:true},
     {m:meshes.detail,model:boatM,color:[1,1,1,1],emis:0,cast:true},
     {m:meshes.sail,model:mul4(boatM,flutter),color:[0.72,0.6,0.42,1],emis:0,cast:true},
-    {m:meshes.boatman,model:boatM,color:[0.3,0.2,0.15,1],emis:0,cast:true},
+    {m:meshes.veeranna,model:mul4(boatM,compose([0,0,0],0,0.03*Math.sin(t*1.15),0)),
+      color:[1,1,1,1],emis:0,cast:true},
+    {m:meshes.chinnu,model:boatM,color:[1,1,1,1],emis:0,cast:true},
     {m:meshes.pole,model:mul4(boatM,poleSwing),color:[0.45,0.33,0.2,1],emis:0,cast:true},
     {m:meshes.bowLamp,model:boatM,color:[1,0.62,0.22,1],emis:2+3*lampAmt,cast:false},
   ];
@@ -893,6 +992,68 @@ function drawList(t,B){
     }
   }
   return list;
+}
+
+// reflection framebuffer (half resolution)
+let reflTex=null,reflFbo=null,reflDepth=null,reflW=0,reflH=0;
+function ensureRefl(){
+  const w=Math.max(2,canvas.width>>1),h=Math.max(2,canvas.height>>1);
+  if(w===reflW&&h===reflH)return;
+  reflW=w;reflH=h;
+  if(reflTex){gl.deleteTexture(reflTex);gl.deleteFramebuffer(reflFbo);gl.deleteRenderbuffer(reflDepth);}
+  reflTex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,reflTex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  reflDepth=gl.createRenderbuffer();
+  gl.bindRenderbuffer(gl.RENDERBUFFER,reflDepth);
+  gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,w,h);
+  reflFbo=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,reflFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,reflTex,0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,reflDepth);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+}
+
+// sky + lit geometry from an arbitrary camera (used by both main and
+// reflection passes; clipBelow=1 discards submerged fragments)
+function renderWorld(eye,look,proj,aspect,wx,tt,lightMat,list,clipBelow){
+  const fwd=norm3(sub3(look,eye));
+  const right=norm3(cross3(fwd,[0,1,0]));
+  const up=cross3(right,fwd);
+  gl.disable(gl.DEPTH_TEST);gl.depthMask(false);
+  gl.useProgram(skyProg);
+  gl.uniform3fv(SK.fwd,fwd);gl.uniform3fv(SK.right,right);gl.uniform3fv(SK.up,up);
+  gl.uniform3fv(SK.sun,wx.sun);gl.uniform3fv(SK.sunCol,wx.sunCol);
+  gl.uniform3fv(SK.horizon,wx.hor);gl.uniform3fv(SK.zenith,wx.zen);
+  gl.uniform1f(SK.tan,Math.tan(0.45));gl.uniform1f(SK.aspect,aspect);
+  gl.uniform1f(SK.time,tt);gl.uniform1f(SK.night,smooth(98,116,tt));
+  gl.bindVertexArray(skyVao);gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.depthMask(true);gl.enable(gl.DEPTH_TEST);
+
+  gl.useProgram(litProg);
+  gl.uniformMatrix4fv(L.proj,false,proj);
+  gl.uniformMatrix4fv(L.view,false,lookAt(eye,look));
+  gl.uniformMatrix4fv(L.lightMat,false,lightMat);
+  gl.uniform3fv(L.eye,eye);gl.uniform3fv(L.sun,wx.sun);gl.uniform3fv(L.sunCol,wx.sunCol);
+  gl.uniform3fv(L.ambG,wx.ambG);gl.uniform3fv(L.ambS,wx.ambS);
+  gl.uniform3fv(L.horizon,wx.hor);gl.uniform1f(L.fogD,wx.fog);
+  gl.uniform1f(L.clipBelow,clipBelow);gl.uniform1f(L.mist,wx.mist);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+  gl.uniform1i(L.shadow,0);
+  for(const d of list){
+    gl.uniformMatrix4fv(L.model,false,d.model);
+    gl.uniform4fv(L.color,d.color);
+    gl.uniform1f(L.emis,d.emis);
+    gl.uniform1f(L.strata,d.strata||0);
+    if(!d.m.hasColor)gl.vertexAttrib3f(2,1,1,1);
+    gl.bindVertexArray(d.m.vao);
+    gl.drawElements(gl.TRIANGLES,d.m.count,gl.UNSIGNED_INT,0);
+  }
+  gl.bindVertexArray(null);
 }
 
 let wallLast=performance.now();
@@ -922,6 +1083,23 @@ function frame(now){
   cardEl.style.opacity=cardOn;
   fadeEl.style.opacity=smooth(117.5,120,t)+(1-smooth(0,2.5,t));
 
+  // dialogue subtitles + speech
+  let dOn=0;
+  for(let i=0;i<DIALOGUE.length;i++){
+    const dl=DIALOGUE[i];
+    if(t>=dl.t0-0.4&&t<=dl.t1+0.4){
+      dOn=smooth(dl.t0-0.4,dl.t0,t)*(1-smooth(dl.t1,dl.t1+0.4,t));
+      if(document.getElementById("dlg-te").textContent!==dl.te){
+        document.getElementById("dlg-who").textContent=dl.who;
+        document.getElementById("dlg-te").textContent=dl.te;
+        document.getElementById("dlg-en").textContent=dl.en;
+      }
+      if(playing&&spokenLine!==i&&t<dl.t0+1.5){spokenLine=i;speakTe(dl.te);}
+      break;
+    }
+  }
+  document.getElementById("dlg").style.opacity=dOn;
+
   const B=boatState(t),wx=weather(t),cam=camera(t);
   const list=drawList(t,B);
 
@@ -945,46 +1123,22 @@ function frame(now){
   }
   gl.disable(gl.POLYGON_OFFSET_FILL);
 
+  // planar reflection pass: mirrored camera into a half-res texture
+  ensureRefl();
+  const aspect=canvas.width/canvas.height;
+  const proj=perspective(0.9,aspect,0.2,1600);
+  const view=lookAt(cam.eye,cam.look);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,reflFbo);
+  gl.viewport(0,0,reflW,reflH);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  renderWorld([cam.eye[0],-cam.eye[1],cam.eye[2]],
+    [cam.look[0],-cam.look[1],cam.look[2]],proj,aspect,wx,t,lightMat,list,1);
+
   // main pass
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   gl.viewport(0,0,canvas.width,canvas.height);
   gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  const aspect=canvas.width/canvas.height;
-  const proj=perspective(0.9,aspect,0.2,1600);
-  const view=lookAt(cam.eye,cam.look);
-
-  // sky
-  const fwd=norm3(sub3(cam.look,cam.eye));
-  const right=norm3(cross3(fwd,[0,1,0]));
-  const up=cross3(right,fwd);
-  gl.disable(gl.DEPTH_TEST);gl.depthMask(false);
-  gl.useProgram(skyProg);
-  gl.uniform3fv(SK.fwd,fwd);gl.uniform3fv(SK.right,right);gl.uniform3fv(SK.up,up);
-  gl.uniform3fv(SK.sun,wx.sun);gl.uniform3fv(SK.sunCol,wx.sunCol);
-  gl.uniform3fv(SK.horizon,wx.hor);gl.uniform3fv(SK.zenith,wx.zen);
-  gl.uniform1f(SK.tan,Math.tan(0.45));gl.uniform1f(SK.aspect,aspect);
-  gl.uniform1f(SK.time,t);gl.uniform1f(SK.night,smooth(98,116,t));
-  gl.bindVertexArray(skyVao);gl.drawArrays(gl.TRIANGLES,0,3);
-  gl.depthMask(true);gl.enable(gl.DEPTH_TEST);
-
-  // lit geometry
-  gl.useProgram(litProg);
-  gl.uniformMatrix4fv(L.proj,false,proj);gl.uniformMatrix4fv(L.view,false,view);
-  gl.uniformMatrix4fv(L.lightMat,false,lightMat);
-  gl.uniform3fv(L.eye,cam.eye);gl.uniform3fv(L.sun,wx.sun);gl.uniform3fv(L.sunCol,wx.sunCol);
-  gl.uniform3fv(L.ambG,wx.ambG);gl.uniform3fv(L.ambS,wx.ambS);
-  gl.uniform3fv(L.horizon,wx.hor);gl.uniform1f(L.fogD,wx.fog);
-  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,shadowTex);
-  gl.uniform1i(L.shadow,0);
-  for(const d of list){
-    gl.uniformMatrix4fv(L.model,false,d.model);
-    gl.uniform4fv(L.color,d.color);
-    gl.uniform1f(L.emis,d.emis);
-    gl.uniform1f(L.strata,d.strata||0);
-    if(!d.m.hasColor)gl.vertexAttrib3f(2,1,1,1);
-    gl.bindVertexArray(d.m.vao);
-    gl.drawElements(gl.TRIANGLES,d.m.count,gl.UNSIGNED_INT,0);
-  }
+  renderWorld(cam.eye,cam.look,proj,aspect,wx,t,lightMat,list,0);
 
   // water
   gl.useProgram(waterProg);
@@ -995,8 +1149,12 @@ function frame(now){
   gl.uniform3fv(W.horizon,wx.hor);gl.uniform3fv(W.zenith,wx.zen);
   gl.uniform3fv(W.deep,wx.deep);gl.uniform1f(W.fogD,wx.fog);
   gl.uniform2fv(W.boat,[B.x,B.z]);gl.uniform1f(W.boatYaw,B.yaw);
+  gl.uniform1f(W.mist,wx.mist);
+  gl.uniform2fv(W.res,[canvas.width,canvas.height]);
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,shadowTex);
   gl.uniform1i(W.shadow,0);
+  gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,reflTex);
+  gl.uniform1i(W.refl,1);
   gl.bindVertexArray(meshes.water.vao);
   gl.drawElements(gl.TRIANGLES,meshes.water.count,gl.UNSIGNED_INT,0);
   gl.bindVertexArray(null);
