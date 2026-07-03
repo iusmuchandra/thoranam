@@ -1,0 +1,4 @@
+node_modules/
+out/
+*.layout.json
+.DS_Store

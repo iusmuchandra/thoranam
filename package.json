@@ -1,0 +1,20 @@
+{
+  "name": "thoranam",
+  "version": "0.1.0",
+  "description": "Sketch-to-3D pipeline for Telugu historical architecture: 2D plans in, glTF game spaces out",
+  "type": "module",
+  "bin": {
+    "thoranam": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test 'test/*.test.js'",
+    "demo": "node src/cli.js demo"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

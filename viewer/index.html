@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>thoranam viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1712; color: #e8dfd0; font: 14px/1.4 Georgia, serif; }
+  #hud { position: fixed; top: 12px; left: 12px; background: rgba(26,23,18,.85); padding: 10px 14px; border-radius: 6px; max-width: 320px; }
+  #hud b { color: #d9a05b; }
+  canvas { display: block; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud"><b>thoranam viewer</b><br />Drag &amp; drop a <code>.glb</code> anywhere on the page.<br /><span id="status">No scene loaded.</span></div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const status = document.getElementById("status");
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x241f18);
+scene.fog = new THREE.Fog(0x241f18, 80, 220);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(35, 22, 42);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(15, 2, 15);
+
+scene.add(new THREE.HemisphereLight(0xffe8c8, 0x40342a, 0.9));
+const sun = new THREE.DirectionalLight(0xffdcae, 2.2);
+sun.position.set(40, 60, 20);
+sun.castShadow = true;
+sun.shadow.camera.left = sun.shadow.camera.bottom = -40;
+sun.shadow.camera.right = sun.shadow.camera.top = 40;
+sun.shadow.mapSize.set(2048, 2048);
+scene.add(sun);
+scene.add(new THREE.GridHelper(120, 60, 0x4a3f30, 0x352c22));
+
+let current = null;
+const loader = new GLTFLoader();
+
+function show(gltf, label) {
+  if (current) scene.remove(current);
+  current = gltf.scene;
+  current.traverse((o) => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; } });
+  scene.add(current);
+  const box = new THREE.Box3().setFromObject(current);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(center);
+  camera.position.copy(center).add(new THREE.Vector3(size * 0.7, size * 0.45, size * 0.85));
+  status.textContent = `Loaded ${label}`;
+}
+
+addEventListener("dragover", (e) => e.preventDefault());
+addEventListener("drop", async (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  const buf = await file.arrayBuffer();
+  loader.parse(buf, "", (gltf) => show(gltf, file.name), (err) => { status.textContent = `Failed: ${err.message ?? err}`; });
+});
+
+// Convenience when served (e.g. `npx serve`): auto-load the demo output.
+fetch("../out/kala-thoranam.glb")
+  .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
+  .then((buf) => loader.parse(buf, "", (gltf) => show(gltf, "out/kala-thoranam.glb")))
+  .catch(() => {});
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script>
+</body>
+</html>
