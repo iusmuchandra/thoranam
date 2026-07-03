@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900">
+  <rect width="900" height="900" fill="#f5f0e4"/>
+  <g stroke="#2b3a55" fill="none" stroke-width="14">
+    <!-- perimeter walls with a gate gap on north and east, 30m x 30m at 20px/m, origin (150,150) -->
+    <path d="M150 150 H410"/> <path d="M490 150 H750"/>          <!-- north, gap 410-490 (4m gate) -->
+    <path d="M150 750 H750"/>                                     <!-- south, solid -->
+    <path d="M150 150 V750"/>                                     <!-- west, solid -->
+    <path d="M750 150 V410"/> <path d="M750 490 V750"/>           <!-- east, gap (4m gate) -->
+  </g>
+  <!-- gateway posts -->
+  <g fill="#2b3a55">
+    <rect x="398" y="138" width="24" height="24"/> <rect x="478" y="138" width="24" height="24"/>
+    <rect x="738" y="398" width="24" height="24"/> <rect x="738" y="478" width="24" height="24"/>
+  </g>
+  <!-- central mandapa: 3x3 pillar grid, 3m spacing, centered at (450,450) -->
+  <g fill="#8a2f1d">
+    <circle cx="390" cy="390" r="9"/><circle cx="450" cy="390" r="9"/><circle cx="510" cy="390" r="9"/>
+    <circle cx="390" cy="450" r="9"/><circle cx="450" cy="450" r="9"/><circle cx="510" cy="450" r="9"/>
+    <circle cx="390" cy="510" r="9"/><circle cx="450" cy="510" r="9"/><circle cx="510" cy="510" r="9"/>
+  </g>
+  <!-- annotations -->
+  <g font-family="Courier, monospace" font-size="26" fill="#2b3a55">
+    <text x="380" y="120">GATE (4m)</text>
+    <text x="770" y="456" transform="rotate(90 770 456)"></text>
+    <text x="330" y="620">MANDAPA 3x3</text>
+    <text x="150" y="820">PLAN: COURTYARD 30m x 30m — WALL H 3m THK 0.8m — GATES H 8m</text>
+    <text x="150" y="855">SCALE BAR (5m):</text>
+    <text x="620" y="120"></text>
+  </g>
+  <rect x="400" y="838" width="100" height="10" fill="#2b3a55"/>
+</svg>
