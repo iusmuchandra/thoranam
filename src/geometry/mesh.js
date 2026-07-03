@@ -42,6 +42,42 @@ export class MeshBuilder {
     }
   }
 
+  addTriangle(a, b, c, normal) {
+    const base = this.positions.length / 3;
+    for (const p of [a, b, c]) this.positions.push(p[0], p[1], p[2]);
+    for (let i = 0; i < 3; i++) this.normals.push(normal[0], normal[1], normal[2]);
+    this.indices.push(base, base + 1, base + 2);
+  }
+
+  // n-sided prism/frustum around the vertical axis at (cx, cz), from y0 to
+  // y1, radius r0 at the bottom and r1 at the top. Flat-shaded sides + caps.
+  // r1 near zero makes a pyramid/spire.
+  addPrism(cx, cz, y0, y1, r0, r1, sides = 8, yaw = 0) {
+    const ring = (r, y) =>
+      Array.from({ length: sides }, (_, i) => {
+        const a = yaw + (i / sides) * Math.PI * 2;
+        return [cx + r * Math.cos(a), y, cz + r * Math.sin(a)];
+      });
+    const bot = ring(r0, y0);
+    const top = ring(Math.max(r1, 1e-4), y1);
+    for (let i = 0; i < sides; i++) {
+      const j = (i + 1) % sides;
+      const [a, b, c, d] = [bot[i], bot[j], top[j], top[i]];
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const v = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+      let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const len = Math.hypot(n[0], n[1], n[2]) || 1;
+      n = [n[0] / len, n[1] / len, n[2] / len];
+      // orient outward from the axis (winding doesn't matter, lighting does)
+      if (n[0] * (a[0] - cx) + n[2] * (a[2] - cz) < 0) n = [-n[0], -n[1], -n[2]];
+      this.addQuad(a, b, c, d, n);
+    }
+    for (let i = 1; i < sides - 1; i++) {
+      this.addTriangle(top[0], top[i], top[i + 1], [0, 1, 0]);
+      this.addTriangle(bot[0], bot[i + 1], bot[i], [0, -1, 0]);
+    }
+  }
+
   get vertexCount() {
     return this.positions.length / 3;
   }

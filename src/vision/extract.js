@@ -34,6 +34,8 @@ Extract:
   Default height 4m, width 0.5m.
 - gateways: torana/entrance spans. from/to are the two post positions on either
   side of the opening. Default height 8m, lintels 2.
+- platforms: raised rectangular plinths under mandapas or shrines (min/max
+  corners + height, default 0.9m). Empty array if the drawing shows none.
 - grid: the overall footprint (width along x, depth along z), padded a little
   beyond the outermost element.
 

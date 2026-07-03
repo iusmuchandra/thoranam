@@ -12,7 +12,7 @@ const VEC2 = {
 export const LAYOUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["name", "units", "grid", "walls", "pillars", "gateways"],
+  required: ["name", "units", "grid", "walls", "pillars", "gateways", "platforms"],
   properties: {
     name: {
       type: "string",
@@ -54,6 +54,21 @@ export const LAYOUT_SCHEMA = {
           at: VEC2,
           height: { type: "number" },
           width: { type: "number", description: "Square column side, meters" },
+        },
+      },
+    },
+    platforms: {
+      type: "array",
+      description:
+        "Raised rectangular plinths (mandapa bases, shrine adisthanas). Empty array if none.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["min", "max", "height"],
+        properties: {
+          min: { ...VEC2, description: "[x, z] of the corner nearest the origin" },
+          max: { ...VEC2, description: "[x, z] of the far corner" },
+          height: { type: "number", description: "Platform height above ground, meters" },
         },
       },
     },

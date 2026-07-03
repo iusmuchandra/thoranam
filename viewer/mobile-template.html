@@ -78,7 +78,7 @@
 "use strict";
 const GLB_BASE64 = "__GLB_BASE64__";
 
-// ---------- tiny vector / matrix kit (column-major, WebGL layout) ----------
+// ---------- vector / matrix kit (column-major, WebGL layout) ----------
 const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale3 = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
@@ -91,6 +91,10 @@ function perspective(fovy, aspect, near, far) {
   const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
   return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
 }
+function ortho(l, r, b, t, n, f) {
+  return [2 / (r - l), 0, 0, 0, 0, 2 / (t - b), 0, 0, 0, 0, -2 / (f - n), 0,
+    -(r + l) / (r - l), -(t + b) / (t - b), -(f + n) / (f - n), 1];
+}
 function lookAt(eye, center, up = [0, 1, 0]) {
   const z = norm3(sub3(eye, center));
   const x = norm3(cross3(up, z));
@@ -98,8 +102,17 @@ function lookAt(eye, center, up = [0, 1, 0]) {
   return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0,
     -dot3(x, eye), -dot3(y, eye), -dot3(z, eye), 1];
 }
+function mul4(a, b) { // a * b, column-major
+  const out = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++)
+    for (let r = 0; r < 4; r++)
+      for (let k = 0; k < 4; k++) out[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+  return out;
+}
 
-// ---------- GLB parsing (positions, normals, indices, base color) ----------
+const SUN_DIR = norm3([0.45, 0.55, 0.28]);
+
+// ---------- GLB parsing ----------
 function parseGLB(buf) {
   const dv = new DataView(buf);
   if (dv.getUint32(0, true) !== 0x46546c67) throw new Error("not a GLB file");
@@ -125,19 +138,23 @@ function parseGLB(buf) {
       const idx = accessor(prim.indices);
       const mat = json.materials?.[prim.material];
       const color = mat?.pbrMetallicRoughness?.baseColorFactor ?? [0.7, 0.7, 0.7, 1];
+      // surface treatment by material name: paving on floors, masonry
+      // coursing on built stone, plain weathered granite otherwise
+      const name = mat?.name ?? "";
+      const surface = name === "floor" ? 2 : ["walls", "gateways", "platforms"].includes(name) ? 1 : 0;
       for (let k = 0; k < 3; k++) {
         bboxMin[k] = Math.min(bboxMin[k], pos.acc.min[k]);
         bboxMax[k] = Math.max(bboxMax[k], pos.acc.max[k]);
       }
       prims.push({ pos: pos.array, nor: nor.array, idx: idx.array,
-        idxType: idx.acc.componentType, color });
+        idxType: idx.acc.componentType, color, surface });
     }
   }
   const tris = prims.reduce((n, p) => n + p.idx.length / 3, 0);
   return { prims, bboxMin, bboxMax, tris, name: json.scenes?.[0]?.name };
 }
 
-// ---------- renderer ----------
+// ---------- GL setup ----------
 const canvas = document.getElementById("gl");
 const gl = canvas.getContext("webgl2", { antialias: true });
 if (!gl) {
@@ -147,53 +164,185 @@ if (!gl) {
   throw new Error("no webgl2");
 }
 
-const VS = `#version 300 es
+function makeProgram(vs, fs) {
+  const compile = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.bindAttribLocation(p, 0, "aPos");
+  gl.bindAttribLocation(p, 1, "aNormal");
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const MAIN_VS = `#version 300 es
 uniform mat4 uProj, uView;
 in vec3 aPos; in vec3 aNormal;
 out vec3 vNormal; out vec3 vWorld;
 void main() { vNormal = aNormal; vWorld = aPos; gl_Position = uProj * uView * vec4(aPos, 1.0); }`;
 
-const FS = `#version 300 es
+const MAIN_FS = `#version 300 es
 precision highp float;
-uniform vec4 uColor; uniform vec3 uEye;
+uniform vec4 uColor; uniform vec3 uEye; uniform float uSurface;
+uniform mat4 uLight; uniform highp sampler2DShadow uShadow;
 in vec3 vNormal; in vec3 vWorld;
 out vec4 frag;
+
+const vec3 SUN = normalize(vec3(0.45, 0.55, 0.28));
+const vec3 HORIZON = vec3(0.88, 0.52, 0.26);
+
+float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vnoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x), mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x), mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
+    f.z);
+}
+float fbm(vec3 p) { return vnoise(p) * 0.55 + vnoise(p * 2.7) * 0.28 + vnoise(p * 7.1) * 0.17; }
+
+float joints(vec2 uv, vec2 cellSize, vec2 softness, float stagger) {
+  float row = floor(uv.y / cellSize.y);
+  vec2 c = vec2(fract(uv.x / cellSize.x + row * stagger), fract(uv.y / cellSize.y));
+  return smoothstep(0.0, softness.x, c.x) * smoothstep(1.0, 1.0 - softness.x, c.x)
+       * smoothstep(0.0, softness.y, c.y) * smoothstep(1.0, 1.0 - softness.y, c.y);
+}
+
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+
 void main() {
   vec3 n = normalize(vNormal);
-  vec3 sunDir = normalize(vec3(0.45, 0.8, 0.3));
-  float sun = max(dot(n, sunDir), 0.0);
+  vec3 albedo = uColor.rgb;
+
+  // stone grain + large-scale tonal drift
+  float grain = fbm(vWorld * 2.1) * 0.6 + fbm(vWorld * 8.5) * 0.4;
+  albedo *= 0.86 + 0.26 * grain;
+
+  if (uSurface > 1.5) {
+    // paving: flagstone grid on upward faces, per-slab tint
+    if (n.y > 0.7) {
+      vec2 uv = vWorld.xz / 1.35;
+      float j = joints(uv, vec2(1.0), vec2(0.045), 0.5);
+      albedo *= mix(0.68, 1.0, j);
+      albedo *= 0.9 + 0.2 * hash(vec3(floor(uv.x), 0.0, floor(uv.y)));
+    }
+  } else if (uSurface > 0.5) {
+    // masonry coursing on the dominant plane
+    vec2 uv = abs(n.y) > 0.6 ? vWorld.xz : (abs(n.x) > abs(n.z) ? vWorld.zy : vWorld.xy);
+    float j = joints(uv, vec2(1.15, 0.55), vec2(0.04, 0.08), 0.5);
+    albedo *= mix(0.72, 1.0, j);
+    // weathering: darker, damper stone near the ground
+    albedo *= 1.0 - 0.2 * smoothstep(1.8, 0.0, vWorld.y) * (0.5 + 0.5 * fbm(vWorld * 1.3));
+  }
+
+  // shadow lookup (3x3 PCF via hardware compare)
+  vec4 lp = uLight * vec4(vWorld, 1.0);
+  vec3 sc = lp.xyz / lp.w * 0.5 + 0.5;
+  float shadow = 1.0;
+  if (sc.z < 1.0 && all(greaterThan(sc.xy, vec2(0.001))) && all(lessThan(sc.xy, vec2(0.999)))) {
+    float bias = 0.0012 + 0.0028 * (1.0 - max(dot(n, SUN), 0.0));
+    float texel = 1.0 / 2048.0;
+    shadow = 0.0;
+    for (int dx = -1; dx <= 1; dx++)
+      for (int dy = -1; dy <= 1; dy++)
+        shadow += texture(uShadow, vec3(sc.xy + vec2(dx, dy) * texel, sc.z - bias));
+    shadow /= 9.0;
+  }
+
+  float ndl = max(dot(n, SUN), 0.0);
+  vec3 sunLight = vec3(1.35, 0.95, 0.6) * 1.15 * ndl * shadow;
   float hemi = 0.5 + 0.5 * n.y;
-  vec3 ambient = mix(vec3(0.30, 0.24, 0.19), vec3(0.95, 0.88, 0.74), hemi) * 0.5;
-  vec3 col = uColor.rgb * (ambient + sun * vec3(1.05, 0.92, 0.74));
-  col = pow(col, vec3(1.0 / 2.2));
-  float fog = 1.0 - exp(-distance(vWorld, uEye) * 0.010);
-  col = mix(col, vec3(0.078, 0.067, 0.047), fog);
-  frag = vec4(col, 1.0);
+  vec3 skyAmb = mix(vec3(0.26, 0.19, 0.14), vec3(0.38, 0.42, 0.55), hemi) * 0.5;
+  vec3 col = albedo * (skyAmb + sunLight);
+
+  // warm dust haze toward the horizon color
+  float fog = 1.0 - exp(-distance(vWorld, uEye) * 0.006);
+  col = mix(col, HORIZON * 0.5, fog);
+
+  frag = vec4(pow(aces(col), vec3(1.0 / 2.2)), 1.0);
 }`;
 
-function compile(type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
-  return s;
-}
-const program = gl.createProgram();
-gl.attachShader(program, compile(gl.VERTEX_SHADER, VS));
-gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FS));
-gl.linkProgram(program);
-if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-gl.useProgram(program);
-const U = {
-  proj: gl.getUniformLocation(program, "uProj"),
-  view: gl.getUniformLocation(program, "uView"),
-  color: gl.getUniformLocation(program, "uColor"),
-  eye: gl.getUniformLocation(program, "uEye"),
-};
-gl.enable(gl.DEPTH_TEST);
-gl.clearColor(0.078, 0.067, 0.047, 1);
+const SHADOW_VS = `#version 300 es
+uniform mat4 uLight;
+in vec3 aPos;
+void main() { gl_Position = uLight * vec4(aPos, 1.0); }`;
+const SHADOW_FS = `#version 300 es
+precision highp float;
+out vec4 frag;
+void main() { frag = vec4(1.0); }`;
 
-let scene = null; // { draws: [{vao, count, idxType, color}], center, size, bboxMin, bboxMax }
+const SKY_VS = `#version 300 es
+out vec2 vNdc;
+void main() {
+  vec2 verts[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+  vNdc = verts[gl_VertexID];
+  gl_Position = vec4(vNdc, 1.0, 1.0);
+}`;
+const SKY_FS = `#version 300 es
+precision highp float;
+uniform vec3 uFwd, uRight, uUp; uniform float uTanHalf, uAspect;
+in vec2 vNdc;
+out vec4 frag;
+const vec3 SUN = normalize(vec3(0.45, 0.55, 0.28));
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+void main() {
+  vec3 dir = normalize(uFwd + vNdc.x * uTanHalf * uAspect * uRight + vNdc.y * uTanHalf * uUp);
+  vec3 horizon = vec3(0.88, 0.52, 0.26);
+  vec3 zenith = vec3(0.09, 0.15, 0.29);
+  vec3 col = dir.y >= 0.0
+    ? mix(horizon, zenith, pow(dir.y, 0.5))
+    : mix(horizon * 0.85, vec3(0.12, 0.095, 0.07), clamp(-dir.y * 6.0, 0.0, 1.0));
+  float d = max(dot(dir, SUN), 0.0);
+  col += vec3(1.0, 0.72, 0.42) * (pow(d, 700.0) * 3.2 + pow(d, 10.0) * 0.32);
+  frag = vec4(pow(aces(col), vec3(1.0 / 2.2)), 1.0);
+}`;
+
+const mainProg = makeProgram(MAIN_VS, MAIN_FS);
+const shadowProg = makeProgram(SHADOW_VS, SHADOW_FS);
+const skyProg = makeProgram(SKY_VS, SKY_FS);
+const uni = (p, n) => gl.getUniformLocation(p, n);
+const U = {
+  proj: uni(mainProg, "uProj"), view: uni(mainProg, "uView"), color: uni(mainProg, "uColor"),
+  eye: uni(mainProg, "uEye"), surface: uni(mainProg, "uSurface"),
+  light: uni(mainProg, "uLight"), shadowTex: uni(mainProg, "uShadow"),
+  shadowLight: uni(shadowProg, "uLight"),
+  skyFwd: uni(skyProg, "uFwd"), skyRight: uni(skyProg, "uRight"), skyUp: uni(skyProg, "uUp"),
+  skyTan: uni(skyProg, "uTanHalf"), skyAspect: uni(skyProg, "uAspect"),
+};
+
+gl.enable(gl.DEPTH_TEST);
+gl.clearColor(0.08, 0.07, 0.05, 1);
+
+// shadow map: depth texture with hardware comparison
+const SHADOW_RES = 2048;
+const shadowTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, shadowTex);
+gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT24, SHADOW_RES, SHADOW_RES);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+const shadowFbo = gl.createFramebuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowTex, 0);
+gl.drawBuffers([gl.NONE]);
+gl.readBuffer(gl.NONE);
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+const skyVao = gl.createVertexArray();
+
+let scene = null;
 
 function loadScene(buf, label) {
   const parsed = parseGLB(buf);
@@ -208,23 +357,28 @@ function loadScene(buf, label) {
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
     };
-    attach(p.pos, gl.getAttribLocation(program, "aPos"));
-    attach(p.nor, gl.getAttribLocation(program, "aNormal"));
+    attach(p.pos, 0);
+    attach(p.nor, 1);
     const ib = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, p.idx, gl.STATIC_DRAW);
     gl.bindVertexArray(null);
-    return { vao, count: p.idx.length, color: p.color,
+    return { vao, count: p.idx.length, color: p.color, surface: p.surface,
       glType: p.idxType === 5125 ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT };
   });
   const center = scale3(add3(parsed.bboxMin, parsed.bboxMax), 0.5);
   const size = Math.hypot(...sub3(parsed.bboxMax, parsed.bboxMin));
-  scene = { draws, center, size, bboxMin: parsed.bboxMin, bboxMax: parsed.bboxMax };
+
+  const lightEye = add3(center, scale3(SUN_DIR, size * 1.2));
+  const r = size * 0.68;
+  const lightMat = mul4(ortho(-r, r, -r, r, 0.1, size * 3), lookAt(lightEye, center));
+
+  scene = { draws, center, size, bboxMin: parsed.bboxMin, bboxMax: parsed.bboxMax, lightMat };
 
   orbit.target = [...center];
-  orbit.dist = size * 0.85;
+  orbit.dist = size * 0.8;
   orbit.yaw = 0.7;
-  orbit.pitch = 0.45;
+  orbit.pitch = 0.38;
   resetWalk();
 
   document.getElementById("stats").textContent =
@@ -234,16 +388,16 @@ function loadScene(buf, label) {
 }
 
 // ---------- camera state ----------
-const orbit = { yaw: 0.7, pitch: 0.45, dist: 40, target: [15, 2, 15] };
-const walk = { pos: [15, 1.6, 40], yaw: Math.PI, pitch: 0, keys: {}, joy: null };
+const orbit = { yaw: 0.7, pitch: 0.38, dist: 40, target: [15, 2, 15] };
+const walk = { pos: [15, 1.6, 40], yaw: 0, pitch: 0, keys: {}, joy: null };
 let mode = "orbit";
 let autoRotate = !matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 function resetWalk() {
   if (!scene) return;
-  walk.pos = [scene.center[0], 1.6, scene.bboxMax[2] + scene.size * 0.12];
+  walk.pos = [scene.center[0], 1.6, scene.bboxMax[2] + scene.size * 0.1];
   walk.yaw = 0; // dir = [sin(yaw), 0, -cos(yaw)] → yaw 0 faces -z, toward the structure
-  walk.pitch = 0.02;
+  walk.pitch = 0.03;
 }
 function walkDir() {
   return [Math.cos(walk.pitch) * Math.sin(walk.yaw), Math.sin(walk.pitch),
@@ -366,7 +520,6 @@ function resize() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
   canvas.width = Math.round(innerWidth * dpr);
   canvas.height = Math.round(innerHeight * dpr);
-  gl.viewport(0, 0, canvas.width, canvas.height);
 }
 addEventListener("resize", resize);
 resize();
@@ -379,6 +532,7 @@ function orbitEye() {
   ]);
 }
 
+const FOV = 1.0;
 let lastT = performance.now();
 function frame(t) {
   requestAnimationFrame(frame);
@@ -386,7 +540,7 @@ function frame(t) {
   lastT = t;
   if (!scene) return;
 
-  if (mode === "orbit" && autoRotate) orbit.yaw += dt * 0.12;
+  if (mode === "orbit" && autoRotate) orbit.yaw += dt * 0.1;
 
   if (mode === "walk") {
     let f = 0, s = 0;
@@ -408,14 +562,56 @@ function frame(t) {
 
   const eye = mode === "walk" ? walk.pos : orbitEye();
   const center = mode === "walk" ? add3(walk.pos, walkDir()) : orbit.target;
-  const far = Math.max(200, (scene.size || 50) * 8);
-  gl.uniformMatrix4fv(U.proj, false, perspective(1.0, canvas.width / canvas.height, 0.1, far));
-  gl.uniformMatrix4fv(U.view, false, lookAt(eye, center));
-  gl.uniform3fv(U.eye, eye);
 
+  // 1. shadow pass
+  gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo);
+  gl.viewport(0, 0, SHADOW_RES, SHADOW_RES);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.POLYGON_OFFSET_FILL);
+  gl.polygonOffset(2, 4);
+  gl.useProgram(shadowProg);
+  gl.uniformMatrix4fv(U.shadowLight, false, scene.lightMat);
+  for (const d of scene.draws) {
+    gl.bindVertexArray(d.vao);
+    gl.drawElements(gl.TRIANGLES, d.count, d.glType, 0);
+  }
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+
+  // 2. main pass
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // sky (fullscreen triangle at the far plane, no depth writes)
+  const fwd = norm3(sub3(center, eye));
+  const right = norm3(cross3(fwd, [0, 1, 0]));
+  const up = cross3(right, fwd);
+  gl.disable(gl.DEPTH_TEST); // sky sits exactly at the far plane; LESS would reject it
+  gl.depthMask(false);
+  gl.useProgram(skyProg);
+  gl.uniform3fv(U.skyFwd, fwd);
+  gl.uniform3fv(U.skyRight, right);
+  gl.uniform3fv(U.skyUp, up);
+  gl.uniform1f(U.skyTan, Math.tan(FOV / 2));
+  gl.uniform1f(U.skyAspect, canvas.width / canvas.height);
+  gl.bindVertexArray(skyVao);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.depthMask(true);
+  gl.enable(gl.DEPTH_TEST);
+
+  // geometry
+  const far = Math.max(200, scene.size * 8);
+  gl.useProgram(mainProg);
+  gl.uniformMatrix4fv(U.proj, false, perspective(FOV, canvas.width / canvas.height, 0.1, far));
+  gl.uniformMatrix4fv(U.view, false, lookAt(eye, center));
+  gl.uniformMatrix4fv(U.light, false, scene.lightMat);
+  gl.uniform3fv(U.eye, eye);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, shadowTex);
+  gl.uniform1i(U.shadowTex, 0);
   for (const d of scene.draws) {
     gl.uniform4fv(U.color, d.color);
+    gl.uniform1f(U.surface, d.surface);
     gl.bindVertexArray(d.vao);
     gl.drawElements(gl.TRIANGLES, d.count, d.glType, 0);
   }

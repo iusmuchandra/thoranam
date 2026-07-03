@@ -47,9 +47,29 @@ test("normals are unit length", () => {
   }
 });
 
-test("fixture builds all four primitive groups", () => {
+test("prism produces expected counts", () => {
+  const mb = new MeshBuilder();
+  mb.addPrism(0, 0, 0, 2, 1, 1, 8);
+  // 8 side quads (4 verts) + 2 caps of 6 fan triangles (3 verts)
+  assert.equal(mb.vertexCount, 8 * 4 + 2 * 6 * 3);
+  assert.equal(mb.triangleCount, 8 * 2 + 2 * 6);
+});
+
+test("prism side normals point outward", () => {
+  const mb = new MeshBuilder();
+  mb.addPrism(5, -3, 0, 2, 1, 1, 8);
+  // side quads come first: check each quad's normal against its first vertex
+  for (let q = 0; q < 8; q++) {
+    const v = q * 12; // 4 verts * 3 components per quad
+    const outward = [mb.positions[v] - 5, 0, mb.positions[v + 2] + 3];
+    const n = [mb.normals[v], mb.normals[v + 1], mb.normals[v + 2]];
+    assert.ok(n[0] * outward[0] + n[2] * outward[2] > 0, `quad ${q} faces outward`);
+  }
+});
+
+test("fixture builds all five primitive groups", () => {
   const prims = buildScene(fixture);
-  assert.deepEqual(prims.map((p) => p.name), ["floor", "walls", "pillars", "gateways"]);
+  assert.deepEqual(prims.map((p) => p.name), ["floor", "platforms", "walls", "pillars", "gateways"]);
   for (const p of prims) {
     assert.ok(p.mesh.triangleCount > 0, `${p.name} has triangles`);
     // every index must reference an existing vertex
@@ -63,12 +83,25 @@ test("fixture builds all four primitive groups", () => {
 
 test("geometry stays above the floor slab", () => {
   const prims = buildScene(fixture);
-  const walls = prims.find((p) => p.name === "walls");
-  let minY = Infinity;
-  for (let i = 1; i < walls.mesh.positions.length; i += 3) {
-    minY = Math.min(minY, walls.mesh.positions[i]);
+  for (const name of ["walls", "pillars", "gateways", "platforms"]) {
+    const group = prims.find((p) => p.name === name);
+    let minY = Infinity;
+    for (let i = 1; i < group.mesh.positions.length; i += 3) {
+      minY = Math.min(minY, group.mesh.positions[i]);
+    }
+    assert.ok(minY >= -1e-9, `${name} sit on y=0 (got ${minY})`);
   }
-  assert.ok(minY >= -1e-9, "walls sit on y=0");
+});
+
+test("pillars on a platform start at platform height", () => {
+  const prims = buildScene(fixture);
+  const pillars = prims.find((p) => p.name === "pillars");
+  let minY = Infinity;
+  for (let i = 1; i < pillars.mesh.positions.length; i += 3) {
+    minY = Math.min(minY, pillars.mesh.positions[i]);
+  }
+  // all fixture pillars sit on the 0.9m platform
+  assert.ok(Math.abs(minY - 0.9) < 1e-9, `pillar base at platform top (got ${minY})`);
 });
 
 test("invalid layout is rejected before building", () => {

@@ -30,6 +30,9 @@
     { "at": [16, 18], "height": 4, "width": 0.5 },
     { "at": [18, 18], "height": 4, "width": 0.5 }
   ],
+  "platforms": [
+    { "min": [10.6, 10.6], "max": [19.4, 19.4], "height": 0.9 }
+  ],
   "gateways": [
     { "from": [13, 0], "to": [17, 0], "height": 8, "lintels": 3 },
     { "from": [13, 30], "to": [17, 30], "height": 8, "lintels": 3 },

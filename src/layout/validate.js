@@ -36,6 +36,14 @@ export function validateLayout(layout) {
     if (!isPositive(p.width)) errors.push(`pillars[${i}]: width must be positive`);
   }
 
+  for (const [i, p] of (layout.platforms ?? []).entries()) {
+    if (!isVec2(p.min) || !isVec2(p.max)) errors.push(`platforms[${i}]: min/max must be [x, z] pairs`);
+    else if (p.min[0] >= p.max[0] || p.min[1] >= p.max[1]) {
+      errors.push(`platforms[${i}]: min must be strictly less than max on both axes`);
+    }
+    if (!isPositive(p.height)) errors.push(`platforms[${i}]: height must be positive`);
+  }
+
   for (const [i, g] of (layout.gateways ?? []).entries()) {
     if (!isVec2(g.from) || !isVec2(g.to)) errors.push(`gateways[${i}]: from/to must be [x, z] pairs`);
     else if (g.from[0] === g.to[0] && g.from[1] === g.to[1]) errors.push(`gateways[${i}]: zero-width span`);
