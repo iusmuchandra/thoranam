@@ -1,0 +1,179 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Krishnaveni — Video Generation Package</title>
+<style>
+  :root { --ground:#14110c; --panel:#1d1913; --ink:#e8dcc3; --brass:#c99a3d; --muted:#8a7b65;
+    --line:rgba(232,220,195,.14); }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--ground); color:var(--ink);
+    font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:860px; margin:0 auto; padding:28px 18px 80px; }
+  header { margin:22px 0 34px; }
+  .eyebrow { font-size:11px; letter-spacing:.24em; color:var(--brass); text-transform:uppercase; margin:0 0 8px; }
+  h1 { margin:0 0 6px; font:600 clamp(26px,5vw,38px)/1.2 "Iowan Old Style",Palatino,Georgia,serif; text-wrap:balance; }
+  h1 .te { color:var(--brass); }
+  .lede { color:var(--muted); max-width:62ch; margin:0; }
+  h2 { font:600 20px/1.3 "Iowan Old Style",Palatino,Georgia,serif; margin:44px 0 6px;
+    padding-top:22px; border-top:1px solid var(--line); }
+  h2 .num { color:var(--brass); font-variant-numeric:tabular-nums; }
+  h3 { font:600 14px/1.3 system-ui,sans-serif; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--muted); margin:20px 0 6px; }
+  p { margin:8px 0; }
+  .prompt { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--brass);
+    border-radius:8px; padding:13px 15px; margin:10px 0;
+    font:13px/1.62 ui-monospace,"SF Mono",Menlo,monospace; white-space:pre-wrap; overflow-x:auto; }
+  .shot { display:grid; grid-template-columns:200px 1fr; gap:18px; margin:16px 0 0; }
+  .shot img { width:100%; border-radius:8px; border:1px solid var(--line); display:block; }
+  .shot .cap { font-size:11px; color:var(--muted); margin-top:6px; text-align:center; }
+  @media (max-width:640px){ .shot { grid-template-columns:1fr; } .shot img { max-width:280px; margin:0 auto; } }
+  .meta { display:flex; flex-wrap:wrap; gap:8px; margin:2px 0 10px; }
+  .meta span { font-size:11.5px; color:var(--muted); border:1px solid var(--line); border-radius:999px;
+    padding:3px 10px; }
+  .meta b { color:var(--ink); font-weight:600; }
+  .dlg { border-left:3px solid var(--line); padding:2px 0 2px 13px; margin:10px 0; }
+  .dlg .who { font-size:10.5px; letter-spacing:.18em; color:var(--brass); text-transform:uppercase; }
+  .dlg .te { font:500 16px/1.5 "Noto Sans Telugu","Nirmala UI",system-ui,sans-serif; margin:2px 0; }
+  .dlg .en { font:italic 400 13px/1.4 Georgia,serif; color:var(--muted); }
+  ul { margin:8px 0; padding-left:20px; }
+  li { margin:4px 0; }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; margin:10px 0; }
+  th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; }
+  .note { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 15px;
+    font-size:13.5px; color:var(--muted); margin:12px 0; }
+  .note b { color:var(--ink); }
+</style>
+<div class="wrap">
+<header>
+  <p class="eyebrow">Thoranam · Film One · Production Package</p>
+  <h1><span class="te">కృష్ణవేణి</span> Krishnaveni — shot-by-shot video generation package</h1>
+  <p class="lede">Everything needed to regenerate the 2-minute animatic as photoreal AI video:
+  a master style block, character sheets, and eight shot cards with prompts, dialogue, and
+  continuity notes. The stills are frames from the WebGL animatic — use them as composition
+  references, recomposed to widescreen.</p>
+</header>
+
+<h2>How to use this package</h2>
+<ul>
+  <li><b>Model:</b> best results as of mid-2026: Veo (reference images + native audio), Kling 2.x
+  (strong character reference), or Runway Gen-4 (good camera control). All examples are plain-text
+  prompts that work across models.</li>
+  <li><b>Pipeline per shot:</b> (1) generate one <i>styleframe</i> with an image model using the
+  shot prompt + the animatic still as composition reference; (2) feed that styleframe to
+  image-to-video with the motion/camera text; (3) generate each sub-clip listed on the card
+  (models cap at ~5–10s); (4) use the last frame of each sub-clip as the first frame of the next
+  for continuity.</li>
+  <li><b>Consistency:</b> paste the STYLE block plus the relevant character blocks into every
+  prompt, verbatim. Lock one seed per shot family where the model allows.</li>
+  <li><b>Format:</b> generate 16:9 (2.39:1 crop in the edit), 24fps. The film's letterbox, title
+  cards, and subtitles are applied in the edit, not generated.</li>
+  <li><b>Audio:</b> generate video silent. Record the Telugu dialogue (or use a Telugu TTS/voice
+  clone), then build the mix per the audio plan at the end.</li>
+</ul>
+
+<h2>Master style block <span class="num">— prepend to every prompt</span></h2>
+<div class="prompt">STYLE: Photorealistic cinematic film, a South Indian period river drama set in 1950s coastal Andhra Pradesh. Shot on 35mm anamorphic, shallow depth of field, gentle film grain, natural restored-classic color grade. Warm golden sunlight, teal-green Krishna river water with real reflections, ochre sandstone gorge cliffs, dry deciduous Nallamala forest. Slow, composed camera movement. No modern objects anywhere: no motorboats, power lines, plastic, signage, life jackets, wristwatches.</div>
+<h3>Global negative prompt</h3>
+<div class="prompt">NEGATIVE: modern objects, motorboat, outboard engine, power lines, plastic, text, watermark, logo, extra limbs, deformed hands, distorted face, oversaturated HDR look, video-game render, cartoon, anime</div>
+
+<h2>Character &amp; prop sheets <span class="num">— paste when on screen</span></h2>
+<h3>Veeranna (the grandfather)</h3>
+<div class="prompt">VEERANNA: a lean, weathered Telugu boatman in his late 60s, deep brown sun-darkened skin, white stubble and a grey handlebar mustache, a loosely tied white cotton turban, bare chest with a faded red-ochre angavastram cloth over the left shoulder, white dhoti folded to the knee, barefoot, a small brass amulet on a black thread. He stands at the stern working a long bamboo punting pole with slow, practiced strokes. Kind, unhurried eyes.</div>
+<h3>Chinnu (the grandson)</h3>
+<div class="prompt">CHINNU: an 8-year-old Telugu boy, bright curious eyes, short black hair, a faded indigo cotton shirt and khaki shorts, barefoot, sitting cross-legged at the bow of the boat beside a small lit brass oil lamp, one hand steadying its base.</div>
+<h3>The boat</h3>
+<div class="prompt">BOAT: a traditional Andhra wooden country boat about nine meters long, dark oiled teak planking, gracefully upswept prow and stern, a painted white-and-black eye on each side of the bow, two faded red paint bands, one patched square beige cotton sail on a bamboo mast, a low thatched-palm canopy amidships, cargo of clay pots and jute grain sacks.</div>
+
+<!-- ================= SHOTS ================= -->
+
+<h2><span class="num">Shot 1</span> · Dawn at the dam <span class="num">(0:00–0:12)</span></h2>
+<div class="shot"><div><img src="__IMG1__" alt="Shot 1 animatic frame" /><p class="cap">animatic 0:04</p></div><div>
+<div class="meta"><span>duration <b>12s</b></span><span>sub-clips <b>2 × 6s</b></span><span>camera <b>slow lateral dolly, wide</b></span><span>light <b>pre-dawn rose</b></span></div>
+<div class="prompt">STYLE + BOAT. Extreme wide establishing shot at first light: a massive 1950s masonry gravity dam stretches across a river valley, crest gates and pier towers silhouetted in rose-pink dawn mist. Below it, a calm teal river with low fog hugging the water. A single small wooden sailboat pushes off from the bank, tiny against the dam. Mirror-still water reflects the dam and sky. Slow lateral dolly right. Birds cross the frame high up. Serene, monumental, quiet.</div>
+<p><b>Continuity:</b> boat enters from lower left, sail just raised. Title card "కృష్ణవేణి — Krishnaveni" is an overlay in the edit at 0:04–0:11 — keep the upper third clean.</p>
+</div></div>
+
+<h2><span class="num">Shot 2</span> · The push-off <span class="num">(0:12–0:25)</span></h2>
+<div class="shot"><div><img src="__IMG2__" alt="Shot 2 animatic frame" /><p class="cap">animatic 0:16</p></div><div>
+<div class="meta"><span>duration <b>13s</b></span><span>sub-clips <b>2 × 7s</b></span><span>camera <b>water-level tracking, alongside</b></span><span>light <b>dawn gold breaking</b></span></div>
+<div class="prompt">STYLE + BOAT + VEERANNA + CHINNU. Water-level tracking shot gliding alongside the wooden boat as it gets underway at dawn. The camera skims the surface; soft mist drifts between camera and boat. Veeranna poles at the stern in silhouette against the brightening sky; Chinnu sits at the bow beside the small brass lamp, its flame the warmest point in frame. The huge dam recedes out of focus behind them. Ripples and the boat's first gentle wake catch pink light.</div>
+<div class="dlg"><p class="who">చిన్ను · Chinnu — 0:14, sleepy, half-whispered</p><p class="te">తాతయ్యా, ఇంత చీకట్లోనే బయలుదేరాలా?</p><p class="en">Grandpa, must we leave while it's still dark?</p></div>
+<div class="dlg"><p class="who">వీరన్న · Veeranna — 0:19, warm, low</p><p class="te">నది నిద్ర లేచే ముందే మనం నీళ్ళలో ఉండాలి రా.</p><p class="en">We must be on the water before the river wakes.</p></div>
+<p><b>Continuity:</b> sub-clip B starts from A's last frame; keep boat travel left-to-right in both.</p>
+</div></div>
+
+<h2><span class="num">Shot 3</span> · The drowned city <span class="num">(0:25–0:40)</span></h2>
+<div class="shot"><div><img src="__IMG3__" alt="Shot 3 animatic frame" /><p class="cap">animatic 0:32</p></div><div>
+<div class="meta"><span>duration <b>15s</b></span><span>sub-clips <b>2 × 8s</b></span><span>camera <b>slow push past boat toward island</b></span><span>light <b>early morning, clearing</b></span></div>
+<div class="prompt">STYLE + BOAT + CHINNU. The boat sails past a small rocky island crowned with an ancient white Buddhist stupa — weathered dome, stone railing, a bent chhatra spire — golden morning light raking across it. Egrets lift off the shallows. Chinnu points at the stupa, mouth open in wonder; Veeranna glances at it without breaking his poling rhythm. The stupa reflects broken in the boat's wake. Camera pushes slowly past the boat toward the island.</div>
+<div class="dlg"><p class="who">చిన్ను · Chinnu — 0:29, excited, pointing</p><p class="te">అదిగో! నీళ్ళ కింద బుద్ధుడి ఊరు!</p><p class="en">Look! The Buddha's town beneath the water!</p></div>
+<div class="dlg"><p class="who">వీరన్న · Veeranna — 0:35, reflective, almost to himself</p><p class="te">అవును… నది అన్నీ గుర్తు పెట్టుకుంటుంది.</p><p class="en">Yes… the river remembers everything.</p></div>
+<p><b>Continuity:</b> stupa passes on the boat's left (screen right). This is the Nagarjunakonda memory — keep it half-ruined, reverent, not restored.</p>
+</div></div>
+
+<h2><span class="num">Shot 4</span> · Into the Nallamala <span class="num">(0:40–1:00)</span></h2>
+<div class="shot"><div><img src="__IMG4__" alt="Shot 4 animatic frame" /><p class="cap">animatic 0:50</p></div><div>
+<div class="meta"><span>duration <b>20s</b></span><span>sub-clips <b>3 × 7s</b></span><span>camera <b>aerial follow, slowly descending</b></span><span>light <b>clear midday</b></span></div>
+<div class="prompt">STYLE + BOAT. Aerial drone-style shot from behind and above the small sailboat, descending slowly as it enters a great river gorge. Forested ochre cliffs rise on both sides, dry deciduous trees clinging to the slopes, scattered boulders at the waterline, reeds along the banks. The teal river narrows and quickens, its surface streaked with the first white ripples of current. An eagle circles below the camera. The boat is small and brave in the vastness. Sub-clip A: high and wide. B: descending past the cliff line. C: settling low behind the boat as the water roughens.</div>
+<div class="dlg"><p class="who">వీరన్న · Veeranna — 0:56, alert, raised voice</p><p class="te">గట్టిగా పట్టుకో! కొండలు మొదలయ్యాయి.</p><p class="en">Hold tight! The hills have begun.</p></div>
+<p><b>Continuity:</b> narration card "The Nallamala, where the river remembers being wild" overlays 0:43–0:54 — keep upper third clean in sub-clips A and B.</p>
+</div></div>
+
+<h2><span class="num">Shot 5</span> · The rapids <span class="num">(1:00–1:15)</span></h2>
+<div class="shot"><div><img src="__IMG5__" alt="Shot 5 animatic frame" /><p class="cap">animatic 1:08</p></div><div>
+<div class="meta"><span>duration <b>15s</b></span><span>sub-clips <b>2 × 8s</b></span><span>camera <b>handheld, close, spray on lens</b></span><span>light <b>hard midday, high contrast</b></span></div>
+<div class="prompt">STYLE + BOAT + VEERANNA + CHINNU. Close handheld action shot in whitewater rapids inside the gorge. The wooden boat pitches and rolls through standing waves between wet black boulders; spray bursts over the painted bow eye and flecks the lens. Veeranna plants his bamboo pole hard against a rock, muscles taut, turban end whipping; Chinnu grips the gunwale with both hands, the brass lamp clutched to his chest, scared and thrilled at once. Whitewater churns around the hull. The camera shakes with the river.</div>
+<div class="dlg"><p class="who">చిన్ను · Chinnu — 1:03, shouted over the water</p><p class="te">తాతయ్యా! అలలు!</p><p class="en">Grandpa! The waves!</p></div>
+<div class="dlg"><p class="who">వీరన్న · Veeranna — 1:07, shouted, fierce and proud</p><p class="te">భయపడకు! ఎదురీత మనకు కొత్త కాదు!</p><p class="en">Don't be afraid! Going against the current is nothing new for us!</p></div>
+<p><b>Continuity:</b> the emotional peak — this is the only handheld shot in the film. End sub-clip B with the water visibly calming.</p>
+</div></div>
+
+<h2><span class="num">Shot 6</span> · Golden calm <span class="num">(1:15–1:30)</span></h2>
+<div class="shot"><div><img src="__IMG6__" alt="Shot 6 animatic frame" /><p class="cap">animatic 1:22</p></div><div>
+<div class="meta"><span>duration <b>15s</b></span><span>sub-clips <b>2 × 8s</b></span><span>camera <b>slow crane up from water level</b></span><span>light <b>golden hour</b></span></div>
+<div class="prompt">STYLE + BOAT + VEERANNA. The river exhales: a slow crane shot rising from water level as the gorge opens out into golden-hour light. The battered boat glides on suddenly calm amber water, its sail patched but holding, long reflections trailing behind it. Veeranna rests on his pole, breathing hard, and allows himself a small smile at Chinnu. Mist begins to gather again in the low light; eagles wheel far overhead. The cliffs glow ochre and rose.</div>
+<div class="dlg"><p class="who">వీరన్న · Veeranna — 1:19, quiet, catching his breath</p><p class="te">చూశావా? నది పరీక్ష పెడుతుంది… తట్టుకున్న వాళ్ళను దీవిస్తుంది.</p><p class="en">You see? The river tests you… and blesses those who hold on.</p></div>
+<p><b>Continuity:</b> the grade shifts warm from here to the end. Keep the boat small in frame by the end of the crane — the reveal is the landscape.</p>
+</div></div>
+
+<h2><span class="num">Shot 7</span> · Arrival at Srisailam <span class="num">(1:30–1:50)</span></h2>
+<div class="shot"><div><img src="__IMG7__" alt="Shot 7 animatic frame" /><p class="cap">animatic 1:45</p></div><div>
+<div class="meta"><span>duration <b>20s</b></span><span>sub-clips <b>3 × 7s</b></span><span>camera <b>slow approach past the boat to the ghats</b></span><span>light <b>violet dusk, lamplight</b></span></div>
+<div class="prompt">STYLE + BOAT + CHINNU. Dusk on the river. Ahead on the right bank, stone ghat steps climb from the water to a South Indian temple complex on the hillside: a tiered gopuram tower and a pillared mandapa glowing with dozens of oil lamps, a temple flag mast, a smaller gateway gopuram at the steps. Strings of tiny flame-lit diyas float on the violet water, and their reflections shiver in the boat's bow wave. Temple bells ring across the water. Chinnu stands up at the bow, face lit by lamplight, overjoyed. First stars overhead. The camera drifts past the boat toward the lights.</div>
+<div class="dlg"><p class="who">చిన్ను · Chinnu — 1:35, joyous, standing</p><p class="te">మల్లన్న దీపాలు! చేరుకున్నాం తాతయ్యా!</p><p class="en">Mallanna's lamps! We've arrived, grandpa!</p></div>
+<div class="dlg"><p class="who">వీరన్న · Veeranna — 1:43, folding his hands, soft</p><p class="te">ఓం నమః శివాయ. ఎదురీత ముగిసింది రా, చిన్నా.</p><p class="en">Om Namah Shivaya. The upstream journey is done, little one.</p></div>
+<p><b>Continuity:</b> temple bells land at 1:32 / 1:37 / 1:43 in the mix — time sub-clip cuts between them. Srisailam Mallikarjuna is a real jyotirlinga: keep the temple dignified, no fantasy embellishment.</p>
+</div></div>
+
+<h2><span class="num">Shot 8</span> · Against the current <span class="num">(1:50–2:00)</span></h2>
+<div class="shot"><div><img src="__IMG8__" alt="Shot 8 animatic frame" /><p class="cap">animatic 1:56</p></div><div>
+<div class="meta"><span>duration <b>10s</b></span><span>sub-clips <b>1 × 10s (or 8s + hold)</b></span><span>camera <b>static high wide, slow fade</b></span><span>light <b>last light, stars out</b></span></div>
+<div class="prompt">STYLE + BOAT. Final static wide from high on the opposite bank: the temple hill and its lamplit ghats mirrored in the dark river, the little boat — a silhouette with one warm lamp — reaching the bottom step. Floating diyas scatter the water like fallen stars; real stars thicken above. A figure on the ghats raises a lamp in greeting. Everything is still except the water. Slow fade to black.</div>
+<p><b>Continuity:</b> closing card overlays at 1:52: "Some journeys go against the current. Those are the ones worth telling." — keep center-frame calm. Fade fully out by 2:00.</p>
+</div></div>
+
+<!-- ================= PRODUCTION ================= -->
+
+<h2>Audio plan</h2>
+<table>
+<tr><th>Element</th><th>Source</th><th>Notes</th></tr>
+<tr><td>Telugu dialogue (10 lines)</td><td>Record VO, or a Telugu voice via TTS/voice-clone (male ~65 + boy ~8)</td><td>Delivery notes on each shot card. Keep it unhurried; the river carries the pace.</td></tr>
+<tr><td>River bed</td><td>Field recording or library: calm water lap → rapids roar (1:00–1:15) → calm</td><td>The rapids swell is the dynamic peak of the mix.</td></tr>
+<tr><td>Drone</td><td>Tanpura in A, very low in the mix throughout; swell under Shot 5</td><td>Optional sparse flute (venuvu) phrase over Shots 4 and 6.</td></tr>
+<tr><td>Temple bells</td><td>Three strikes: 1:32, 1:37, 1:43; distant reverb</td><td>Let the third ring decay under Veeranna's final line.</td></tr>
+<tr><td>Birdsong</td><td>Sparse, Shots 2–4 only</td><td></td></tr>
+</table>
+
+<h2>Edit assembly</h2>
+<ul>
+  <li>Timeline: 24fps, 2.39:1 letterbox on a 16:9 master. Cut points at 0:12, 0:25, 0:40, 1:00, 1:15, 1:30, 1:50 — hard cuts everywhere except the closing fade.</li>
+  <li>Title (0:04) and narration cards (0:43, 1:28 "Srisailam.", 1:52 closer) in a serif face
+  (Iowan/Palatino class); Telugu dialogue subtitles bottom-center with speaker names, exactly as in the animatic.</li>
+  <li>Grade: single warm LUT across the film; let the generated time-of-day do the work. Add 4–6% film grain last.</li>
+  <li>The running animatic (thoranam repo, <code>film/krishnaveni.html</code>) is the timing
+  reference — play it side-by-side while cutting.</li>
+</ul>
+
+<div class="note"><b>Rights note:</b> everything in this package — story, script, dialogue, shot design — is original work from this project. Nagarjuna Sagar, Srisailam, and the Kala Thoranam are real places referenced respectfully; generated depictions are stylized, not documentary.</div>
+
+</div>
