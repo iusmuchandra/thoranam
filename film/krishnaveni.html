@@ -1,0 +1,843 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Krishnaveni — a river journey</title>
+<style>
+  :root { --ink:#e8dcc3; --brass:#c99a3d; --muted:#8a7b65; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; background:#000; color:var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas#gl { position:fixed; inset:0; width:100%; height:100%; display:block; }
+
+  .bar-top, .bar-bot { position:fixed; left:0; right:0; height:9vh; background:#000; z-index:2; }
+  .bar-top { top:0; } .bar-bot { bottom:0; }
+
+  #chip { position:fixed; top:calc(9vh + 10px); left:12px; z-index:3; opacity:.85;
+    font-size:10px; letter-spacing:.22em; color:var(--brass); text-transform:uppercase; }
+
+  #card { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(9vh + 26px);
+    z-index:3; max-width:min(86vw, 560px); text-align:center; opacity:0; transition:opacity .8s;
+    font: italic 400 clamp(15px, 2.6vw, 21px)/1.5 "Iowan Old Style", Palatino, Georgia, serif;
+    color:var(--ink); text-shadow:0 1px 8px rgba(0,0,0,.8); text-wrap:balance; }
+
+  #overlay { position:fixed; inset:0; z-index:5; display:grid; place-items:center;
+    background:rgba(4,3,2,.72); transition:opacity .7s; }
+  #overlay.hidden { opacity:0; pointer-events:none; }
+  #overlay .box { text-align:center; }
+  #overlay .telugu { font-size:clamp(34px, 8vw, 62px); color:var(--ink); margin:0;
+    font-family:"Noto Sans Telugu", "Nirmala UI", system-ui, sans-serif; }
+  #overlay .latin { font: 400 13px/1 Georgia, serif; letter-spacing:.34em; color:var(--brass);
+    text-transform:uppercase; margin:10px 0 4px; }
+  #overlay .sub { color:var(--muted); font-size:12px; margin:0 0 26px; }
+  #play { width:74px; height:74px; border-radius:50%; border:1px solid var(--brass);
+    background:rgba(201,154,61,.14); color:var(--brass); font-size:26px; cursor:pointer; }
+  #play:hover { background:rgba(201,154,61,.28); }
+  #play:focus-visible { outline:2px solid var(--brass); outline-offset:3px; }
+
+  #transport { position:fixed; bottom:calc(9vh - 34px); left:50%; transform:translateX(-50%);
+    z-index:4; display:flex; align-items:center; gap:10px; width:min(86vw, 520px); opacity:.9; }
+  #scrub { flex:1; accent-color:var(--brass); height:3px; }
+  #clock { font:11px ui-monospace, Menlo, monospace; color:var(--muted); min-width:66px;
+    font-variant-numeric: tabular-nums; }
+  #fade { position:fixed; inset:0; background:#000; opacity:0; pointer-events:none; z-index:3; }
+</style>
+
+<canvas id="gl"></canvas>
+<div class="bar-top"></div><div class="bar-bot"></div>
+<div id="fade"></div>
+<p id="chip">Thoranam &middot; Film One</p>
+<p id="card"></p>
+<div id="transport">
+  <span id="clock">0:00 / 2:00</span>
+  <input id="scrub" type="range" min="0" max="120" step="0.1" value="0" aria-label="timeline" />
+</div>
+<div id="overlay">
+  <div class="box">
+    <p class="telugu">కృష్ణవేణి</p>
+    <p class="latin">Krishnaveni</p>
+    <p class="sub">a river journey &middot; Nagarjuna Sagar → Srisailam &middot; 2 min</p>
+    <button id="play" aria-label="play">&#9654;</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ============================== math =====================================
+const sub3=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const add3=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const scale3=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
+const dot3=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross3=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const norm3=a=>{const l=Math.hypot(...a)||1;return[a[0]/l,a[1]/l,a[2]/l];};
+const clamp=(v,l,h)=>Math.min(h,Math.max(l,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const lerp3=(a,b,t)=>[lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)];
+const smooth=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
+
+function perspective(fovy,aspect,near,far){const f=1/Math.tan(fovy/2),nf=1/(near-far);
+  return[f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0];}
+function ortho(l,r,b,t,n,f){return[2/(r-l),0,0,0,0,2/(t-b),0,0,0,0,-2/(f-n),0,
+  -(r+l)/(r-l),-(t+b)/(t-b),-(f+n)/(f-n),1];}
+function lookAt(eye,c,up=[0,1,0]){const z=norm3(sub3(eye,c)),x=norm3(cross3(up,z)),y=cross3(z,x);
+  return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot3(x,eye),-dot3(y,eye),-dot3(z,eye),1];}
+function mul4(a,b){const o=new Array(16).fill(0);
+  for(let c=0;c<4;c++)for(let r=0;r<4;r++)for(let k=0;k<4;k++)o[c*4+r]+=a[k*4+r]*b[c*4+k];return o;}
+const IDENT=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+// translate * rotY(yaw) * rotX(pitch) * rotZ(roll), column-major
+function compose(pos,yaw=0,pitch=0,roll=0){
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(pitch),sx=Math.sin(pitch),
+        cz=Math.cos(roll),sz=Math.sin(roll);
+  const ry=[cy,0,-sy,0, 0,1,0,0, sy,0,cy,0, 0,0,0,1];
+  const rx=[1,0,0,0, 0,cx,sx,0, 0,-sx,cx,0, 0,0,0,1];
+  const rz=[cz,sz,0,0, -sz,cz,0,0, 0,0,1,0, 0,0,0,1];
+  const m=mul4(ry,mul4(rx,rz));
+  m[12]=pos[0];m[13]=pos[1];m[14]=pos[2];
+  return m;
+}
+
+// ============================== noise ====================================
+function hash2(x,z){let h=Math.sin(x*127.1+z*311.7)*43758.5453;return h-Math.floor(h);}
+function vnoise(x,z){
+  const xi=Math.floor(x),zi=Math.floor(z),xf=x-xi,zf=z-zi;
+  const u=xf*xf*(3-2*xf),v=zf*zf*(3-2*zf);
+  return lerp(lerp(hash2(xi,zi),hash2(xi+1,zi),u),lerp(hash2(xi,zi+1),hash2(xi+1,zi+1),u),v);
+}
+function fbm(x,z){return vnoise(x,z)*0.55+vnoise(x*2.7,z*2.7)*0.28+vnoise(x*6.9,z*6.9)*0.17;}
+function ridge(x,z){return 1-Math.abs(2*fbm(x,z)-1);}
+
+// ============================== river & terrain ==========================
+const riverX=z=>16*Math.sin(z*0.006)+10*Math.sin(z*0.0023+1.7);
+const gorge=z=>smooth(350,620,z)*(1-smooth(1150,1360,z));
+const chanW=z=>26-10*gorge(z);
+function terrainH(x,z){
+  const d=Math.abs(x-riverX(z));
+  const W=chanW(z);
+  if(d<W*0.55)return -3;
+  const bank=smooth(W*0.55,W,d)*2.2;
+  const wall=smooth(W,W+85,d);
+  const cliffH=12+58*gorge(z);
+  const r=0.55+0.45*ridge(x*0.015,z*0.015);
+  const detail=6*fbm(x*0.05,z*0.05);
+  let h=bank+wall*(cliffH*r+detail);
+  if(d<W*0.55+2)h=Math.min(h,-1+bank);
+  return h;
+}
+
+// ============================== mesh builder =============================
+class MB{
+  constructor(){this.positions=[];this.normals=[];this.colors=null;this.indices=[];}
+  addQuad(a,b,c,d,n){
+    const base=this.positions.length/3;
+    for(const p of[a,b,c,d])this.positions.push(p[0],p[1],p[2]);
+    for(let i=0;i<4;i++)this.normals.push(n[0],n[1],n[2]);
+    this.indices.push(base,base+1,base+2,base,base+2,base+3);
+  }
+  addTri(a,b,c,n){
+    const base=this.positions.length/3;
+    for(const p of[a,b,c])this.positions.push(p[0],p[1],p[2]);
+    for(let i=0;i<3;i++)this.normals.push(n[0],n[1],n[2]);
+    this.indices.push(base,base+1,base+2);
+  }
+  addBox(center,half,yaw=0){
+    const[hx,hy,hz]=half,cos=Math.cos(yaw),sin=Math.sin(yaw);
+    const tp=([x,y,z])=>[center[0]+x*cos+z*sin,center[1]+y,center[2]-x*sin+z*cos];
+    const tn=([x,y,z])=>[x*cos+z*sin,y,-x*sin+z*cos];
+    const F=[[[0,1,0],[[-hx,hy,-hz],[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz]]],
+      [[0,-1,0],[[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[-hx,-hy,hz]]],
+      [[1,0,0],[[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz],[hx,-hy,hz]]],
+      [[-1,0,0],[[-hx,-hy,-hz],[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz]]],
+      [[0,0,1],[[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz]]],
+      [[0,0,-1],[[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz],[hx,-hy,-hz]]]];
+    for(const[n,q]of F)this.addQuad(...q.map(tp),tn(n));
+  }
+  addPrism(cx,cz,y0,y1,r0,r1,sides=8,yaw=0){
+    const ring=(r,y)=>Array.from({length:sides},(_,i)=>{
+      const a=yaw+i/sides*Math.PI*2;return[cx+r*Math.cos(a),y,cz+r*Math.sin(a)];});
+    const bot=ring(r0,y0),top=ring(Math.max(r1,1e-4),y1);
+    for(let i=0;i<sides;i++){
+      const j=(i+1)%sides,[a,b,c,d]=[bot[i],bot[j],top[j],top[i]];
+      const u=sub3(b,a),v=sub3(d,a);let n=norm3(cross3(u,v));
+      if(n[0]*(a[0]-cx)+n[2]*(a[2]-cz)<0)n=scale3(n,-1);
+      this.addQuad(a,b,c,d,n);
+    }
+    for(let i=1;i<sides-1;i++){
+      this.addTri(top[0],top[i],top[i+1],[0,1,0]);
+      this.addTri(bot[0],bot[i+1],bot[i],[0,-1,0]);
+    }
+  }
+}
+
+// ============================== world meshes =============================
+// terrain with vertex colors
+function buildTerrain(){
+  const mb=new MB();mb.colors=[];
+  const x0=-140,x1=140,z0=-120,z1=1580,step=4;
+  const nx=Math.round((x1-x0)/step),nz=Math.round((z1-z0)/step);
+  const idx=(i,j)=>i*(nz+1)+j;
+  const H=[],C=[];
+  for(let i=0;i<=nx;i++)for(let j=0;j<=nz;j++){
+    const x=x0+i*step,z=z0+j*step,h=terrainH(x,z);
+    H.push([x,h,z]);
+    // color: rock / forest / sand
+    const hx=terrainH(x+step,z)-h,hz=terrainH(x,z+step)-h;
+    const slope=Math.hypot(hx,hz)/step;
+    const n=fbm(x*0.03+7,z*0.03);
+    let col=[0.42,0.32,0.24];                               // rock
+    col=lerp3(col,[0.55,0.42,0.3],clamp(n*1.2-0.2,0,1)*0.5);// tonal drift
+    const forest=clamp(1.7-slope*1.5,0,1)*smooth(1.2,3.5,h)*(1-smooth(36,58,h));
+    col=lerp3(col,[0.14,0.25,0.12],forest*(0.6+0.4*n));     // nallamala green
+    const sand=1-smooth(0.5,1.9,h);
+    col=lerp3(col,[0.62,0.52,0.36],sand);                   // banks
+    if(h<0)col=[0.2,0.18,0.13];                             // riverbed
+    C.push(col);
+  }
+  for(let i=0;i<=nx;i++)for(let j=0;j<=nz;j++){
+    mb.positions.push(...H[idx(i,j)]);
+    // normal by central difference
+    const l=H[idx(Math.max(i-1,0),j)][1],r=H[idx(Math.min(i+1,nx),j)][1];
+    const d=H[idx(i,Math.max(j-1,0))][1],u=H[idx(i,Math.min(j+1,nz))][1];
+    mb.normals.push(...norm3([(l-r)/(2*step),1,(d-u)/(2*step)]));
+    mb.colors.push(...C[idx(i,j)]);
+  }
+  for(let i=0;i<nx;i++)for(let j=0;j<nz;j++){
+    const a=idx(i,j),b=idx(i+1,j),c=idx(i+1,j+1),d=idx(i,j+1);
+    mb.indices.push(a,b,c,a,c,d);
+  }
+  return mb;
+}
+
+// water plane grid (animated in shader)
+function buildWater(){
+  const mb=new MB();
+  const x0=-90,x1=90,z0=-120,z1=1580,step=6;
+  const nx=Math.round((x1-x0)/step),nz=Math.round((z1-z0)/step);
+  const idx=(i,j)=>i*(nz+1)+j;
+  for(let i=0;i<=nx;i++)for(let j=0;j<=nz;j++){
+    mb.positions.push(x0+i*step,0,z0+j*step);
+    mb.normals.push(0,1,0);
+  }
+  for(let i=0;i<nx;i++)for(let j=0;j<nz;j++){
+    const a=idx(i,j),b=idx(i+1,j),c=idx(i+1,j+1),d=idx(i,j+1);
+    mb.indices.push(a,b,c,a,c,d);
+  }
+  return mb;
+}
+
+// Nagarjuna Sagar dam across the valley behind the start
+function buildDam(){
+  const mb=new MB();
+  const z=-58,cx=riverX(z);
+  mb.addBox([cx,13,z],[110,15,7]);                 // main gravity wall
+  mb.addBox([cx,27.2,z],[112,1.2,9]);              // crest road
+  for(let i=-9;i<=9;i++){
+    mb.addBox([cx+i*11,20,z+6.4],[1.6,7,1.6]);     // piers on the downstream face
+    if(i>-9)mb.addBox([cx+i*11-5.5,23,z+5.6],[3.6,3.4,0.5]); // gates
+  }
+  for(let i=-4;i<=4;i++)mb.addBox([cx+i*24,8,z+9],[4,8,4]); // buttresses
+  return mb;
+}
+
+// stupa on an island mound (Nagarjunakonda memory)
+function buildStupa(){
+  const mb=new MB();
+  const x=riverX(300)+40,z=300;
+  mb.addPrism(x,z,0,3.4,16,12,16);                 // mound
+  mb.addPrism(x,z,3.4,5.2,9.5,9.2,16);             // drum
+  mb.addPrism(x,z,5.2,9.6,9.2,3.2,16);             // dome
+  mb.addBox([x,10.2,z],[1.5,0.7,1.5]);             // harmika
+  mb.addPrism(x,z,10.9,13.6,0.28,0.28,6);          // pole
+  mb.addPrism(x,z,12.2,12.5,2.1,1.4,8);            // chhatra
+  mb.addPrism(x,z,13.0,13.3,1.4,0.8,8);
+  return mb;
+}
+
+// scattered boulders through the gorge
+function buildBoulders(){
+  const mb=new MB();
+  for(let k=0;k<70;k++){
+    const z=420+hash2(k,3)*760;
+    const side=hash2(k,7)>0.5?1:-1;
+    const x=riverX(z)+side*(chanW(z)*0.62+hash2(k,11)*7);
+    const r=0.7+hash2(k,13)*2.4;
+    mb.addPrism(x,z,-1,-1+r*1.5,r,r*0.4,7,hash2(k,17)*6);
+  }
+  return mb;
+}
+
+// Srisailam: ghat steps, temple wall, gopuram on the hill (right bank ~z 1455)
+const TEMPLE={z:1452,x:riverX(1452)+30};
+function buildTemple(){
+  const mb=new MB();
+  const {x,z}=TEMPLE;
+  for(let i=0;i<12;i++)                            // ghat steps down to water
+    mb.addBox([x-14+i*1.35,0.4+i*0.75,z],[1.2,0.75,17-i*0.45]);
+  mb.addBox([x+4,10.6,z],[7,1.6,15]);              // upper terrace
+  mb.addBox([x+9,14.5,z],[1.2,3,13]);              // prakara wall
+  // gopuram: stacked tapering tiers
+  const gx=x+7,gz=z;
+  let y=12.2;
+  const tiers=[[5.2,4.2,3.4],[4.0,3.2,2.8],[3.0,2.3,2.4],[2.2,1.6,2.0],[1.5,0.9,1.7]];
+  for(const[r0,r1,h]of tiers){mb.addPrism(gx,gz,y,y+h,r0,r1,4,Math.PI/4);y+=h;}
+  mb.addBox([gx,y+0.5,gz],[2.2,0.5,0.7]);          // barrel crown
+  for(const dz of[-1.1,0,1.1])mb.addPrism(gx,gz+dz,y+1,y+2.1,0.34,0.02,6); // kalasams
+  // small shrine by the steps
+  mb.addPrism(x-10,z-13,0.8,4.6,1.6,0.5,4,Math.PI/4);
+  return mb;
+}
+
+// lamps: ghat lamps + floating diyas (drawn emissive)
+function buildLamps(){
+  const mb=new MB();
+  const {x,z}=TEMPLE;
+  for(let i=0;i<9;i++)mb.addBox([x-13+i*1.6,1.6+i*0.75,z+15.5-i*0.4],[0.16,0.16,0.16]);
+  for(let i=0;i<9;i++)mb.addBox([x-13+i*1.6,1.6+i*0.75,z-15.5+i*0.4],[0.16,0.16,0.16]);
+  for(let k=0;k<10;k++)
+    mb.addBox([x-20-hash2(k,5)*14,0.18,z-10+hash2(k,9)*20],[0.13,0.1,0.13]);
+  return mb;
+}
+
+// the boat: lofted hull, canopy, mast, sail, boatman, lamp — local +z = forward
+function buildHull(){
+  const mb=new MB();
+  // stations: [z, halfWidthBottom, halfWidthTop, yBottom, yTop]
+  const S=[[-4.4,0.02,0.1,0.85,1.5],[-3.6,0.28,0.62,0.28,1.05],[-2.2,0.5,0.92,0.06,0.9],
+    [0,0.58,1.02,0,0.86],[2.2,0.5,0.94,0.06,0.9],[3.6,0.3,0.66,0.3,1.1],[4.6,0.02,0.12,0.95,1.65]];
+  for(let i=0;i<S.length-1;i++){
+    const[a,b]=[S[i],S[i+1]];
+    for(const s of[1,-1]){ // sides
+      const p0=[s*a[1],a[3],a[0]],p1=[s*a[2],a[4],a[0]],
+            p2=[s*b[2],b[4],b[0]],p3=[s*b[1],b[3],b[0]];
+      const n=norm3(cross3(sub3(p2,p1),sub3(p0,p1)));
+      mb.addQuad(p0,p1,p2,p3,scale3(n,n[0]*s<0?-1:1));
+    }
+    mb.addQuad([-a[1],a[3],a[0]],[a[1],a[3],a[0]],[b[1],b[3],b[0]],[-b[1],b[3],b[0]],[0,-1,0]); // bottom
+    // gunwale caps
+    mb.addQuad([-a[2],a[4],a[0]],[-b[2],b[4],b[0]],[b[2],b[4],b[0]],[a[2],a[4],a[0]],[0,1,0]);
+  }
+  mb.addBox([0,0.55,-1.1],[0.85,0.07,0.09]);       // thwarts
+  mb.addBox([0,0.55,1.3],[0.8,0.07,0.09]);
+  // thatched canopy arch over midship
+  for(let i=-2;i<=2;i++){
+    const a=i*0.32;
+    mb.addBox([Math.sin(a)*0.95,1.35+Math.cos(a)*0.55,-0.2],[0.14,0.05,1.5],0,0);
+  }
+  mb.addPrism(0,1.9,0.9,5.6,0.07,0.05,6);          // mast (x=0? prism takes cx,cz) → at z=1.9
+  return mb;
+}
+function buildSail(){
+  const mb=new MB();
+  // trapezoid sail hung from yard, slightly bellied (two panels)
+  const n=[1,0,0.15];
+  mb.addQuad([0.08,5.3,0.6],[0.08,5.4,3.2],[0.3,3.4,3.5],[0.26,2.6,0.7],norm3(n));
+  mb.addQuad([0.26,2.6,0.7],[0.3,3.4,3.5],[0.2,2.2,3.4],[0.3,1.8,1.0],norm3(n));
+  return mb;
+}
+function buildBoatman(){
+  const mb=new MB();
+  mb.addBox([0,1.15,-3.1],[0.22,0.34,0.16]);       // torso
+  mb.addPrism(0,-3.1,1.5,1.78,0.13,0.11,6);        // head
+  mb.addBox([0.28,1.05,-3.0],[0.06,0.3,0.06],0.3); // arm on pole
+  mb.addPrism(0.42,-2.9,-0.6,2.4,0.045,0.04,5);    // punting pole
+  return mb;
+}
+function buildLampBow(){
+  const mb=new MB();
+  mb.addBox([0,1.62,4.28],[0.11,0.11,0.11]);
+  return mb;
+}
+// bird: body + one wing mesh reused mirrored
+function buildBirdBody(){const mb=new MB();mb.addBox([0,0,0],[0.06,0.05,0.28]);return mb;}
+function buildWing(){const mb=new MB();
+  mb.addQuad([0,0,-0.1],[0.85,0.06,-0.24],[0.85,0.06,0.1],[0,0,0.16],[0,1,0]);return mb;}
+
+// ============================== GL =======================================
+const canvas=document.getElementById("gl");
+const gl=canvas.getContext("webgl2",{antialias:true});
+if(!gl){document.body.innerHTML="<p style='padding:40px'>Needs WebGL2 — try Chrome or Samsung Internet.</p>";throw new Error("no webgl2");}
+
+function makeProgram(vs,fs){
+  const c=(t,s)=>{const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(sh));return sh;};
+  const p=gl.createProgram();
+  gl.attachShader(p,c(gl.VERTEX_SHADER,vs));gl.attachShader(p,c(gl.FRAGMENT_SHADER,fs));
+  gl.bindAttribLocation(p,0,"aPos");gl.bindAttribLocation(p,1,"aNormal");gl.bindAttribLocation(p,2,"aColor");
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const GLSL_COMMON=`
+vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0);}
+float hashv(vec3 p){p=fract(p*0.3183099+0.1);p*=17.0;return fract(p.x*p.y*p.z*(p.x+p.y+p.z));}
+float vn(vec3 x){vec3 i=floor(x),f=fract(x);f=f*f*(3.0-2.0*f);
+  return mix(mix(mix(hashv(i),hashv(i+vec3(1,0,0)),f.x),mix(hashv(i+vec3(0,1,0)),hashv(i+vec3(1,1,0)),f.x),f.y),
+    mix(mix(hashv(i+vec3(0,0,1)),hashv(i+vec3(1,0,1)),f.x),mix(hashv(i+vec3(0,1,1)),hashv(i+vec3(1,1,1)),f.x),f.y),f.z);}
+float fbm3(vec3 p){return vn(p)*0.55+vn(p*2.7)*0.28+vn(p*7.1)*0.17;}
+float shadowAt(highp sampler2DShadow sm, mat4 lm, vec3 w, vec3 n, vec3 sun){
+  vec4 lp=lm*vec4(w,1.0);vec3 sc=lp.xyz/lp.w*0.5+0.5;
+  if(sc.z>=1.0||any(lessThan(sc.xy,vec2(0.002)))||any(greaterThan(sc.xy,vec2(0.998))))return 1.0;
+  float bias=0.0015+0.003*(1.0-max(dot(n,sun),0.0));
+  float s=0.0;float tx=1.0/2048.0;
+  for(int dx=-1;dx<=1;dx++)for(int dy=-1;dy<=1;dy++)
+    s+=texture(sm,vec3(sc.xy+vec2(dx,dy)*tx,sc.z-bias));
+  return s/9.0;
+}`;
+
+const LIT_VS=`#version 300 es
+uniform mat4 uProj,uView,uModel;
+in vec3 aPos;in vec3 aNormal;in vec3 aColor;
+out vec3 vN;out vec3 vW;out vec3 vC;
+void main(){vec4 w=uModel*vec4(aPos,1.0);vW=w.xyz;vN=mat3(uModel)*aNormal;vC=aColor;
+  gl_Position=uProj*uView*w;}`;
+
+const LIT_FS=`#version 300 es
+precision highp float;
+uniform vec4 uColor;uniform float uEmissive;uniform vec3 uEye;
+uniform vec3 uSun,uSunCol,uAmbG,uAmbS,uHorizon;uniform float uFogD;
+uniform mat4 uLightMat;uniform highp sampler2DShadow uShadow;
+in vec3 vN;in vec3 vW;in vec3 vC;out vec4 frag;
+${GLSL_COMMON}
+void main(){
+  vec3 n=normalize(vN);
+  vec3 albedo=uColor.rgb*vC;
+  albedo*=0.88+0.24*fbm3(vW*1.9);
+  vec3 col;
+  if(uEmissive>0.0){
+    col=albedo*uEmissive;
+  }else{
+    float sh=shadowAt(uShadow,uLightMat,vW,n,uSun);
+    float ndl=max(dot(n,uSun),0.0);
+    float hemi=0.5+0.5*n.y;
+    col=albedo*(mix(uAmbG,uAmbS,hemi)+uSunCol*ndl*sh);
+  }
+  float fog=1.0-exp(-distance(vW,uEye)*uFogD);
+  col=mix(col,uHorizon*0.55,fog);
+  frag=vec4(pow(aces(col),vec3(1.0/2.2)),1.0);
+}`;
+
+const WATER_VS=`#version 300 es
+uniform mat4 uProj,uView;uniform float uTime;
+in vec3 aPos;
+out vec3 vW;out vec3 vN;
+float wv(vec2 p,float t){
+  return sin(p.x*0.32+t*1.25)*0.10+sin(p.y*0.21-t*0.85)*0.09
+       +sin((p.x+p.y)*0.13+t*0.6)*0.07+sin((p.x-p.y*0.7)*0.45+t*1.9)*0.035;}
+void main(){
+  vec2 p=aPos.xz;float t=uTime;
+  float h=wv(p,t);
+  float e=0.6;
+  vec3 n=normalize(vec3(wv(p-vec2(e,0.),t)-wv(p+vec2(e,0.),t),2.0*e,
+                        wv(p-vec2(0.,e),t)-wv(p+vec2(0.,e),t)));
+  vW=vec3(aPos.x,h,aPos.z);vN=n;
+  gl_Position=uProj*uView*vec4(vW,1.0);}`;
+
+const WATER_FS=`#version 300 es
+precision highp float;
+uniform vec3 uEye,uSun,uSunCol,uHorizon,uZenith,uDeep;uniform float uFogD,uTime;
+uniform mat4 uLightMat;uniform highp sampler2DShadow uShadow;
+in vec3 vW;in vec3 vN;out vec4 frag;
+${GLSL_COMMON}
+void main(){
+  vec3 n=normalize(vN);
+  vec3 v=normalize(uEye-vW);
+  float fres=pow(1.0-max(dot(n,v),0.0),3.0)*0.55+0.06;
+  float sh=shadowAt(uShadow,uLightMat,vW,n,uSun);
+  float flow=fbm3(vec3(vW.x*0.25,uTime*0.22,vW.z*0.12));
+  vec3 base=uDeep*(0.75+0.4*flow);
+  vec3 refl=mix(uHorizon,uZenith,0.35);
+  vec3 col=mix(base,refl,fres);
+  vec3 r=reflect(-v,n);
+  float glit=pow(max(dot(r,uSun),0.0),160.0)*(0.55+0.45*hashv(floor(vW*7.0)));
+  col+=uSunCol*glit*1.6*sh;
+  col+=uSunCol*0.05*max(dot(n,uSun),0.0)*sh;
+  float fog=1.0-exp(-distance(vW,uEye)*uFogD);
+  col=mix(col,uHorizon*0.55,fog);
+  frag=vec4(pow(aces(col),vec3(1.0/2.2)),1.0);
+}`;
+
+const SHADOW_VS=`#version 300 es
+uniform mat4 uLightMat,uModel;in vec3 aPos;
+void main(){gl_Position=uLightMat*uModel*vec4(aPos,1.0);}`;
+const SHADOW_FS=`#version 300 es
+precision highp float;out vec4 frag;void main(){frag=vec4(1.0);}`;
+
+const SKY_VS=`#version 300 es
+out vec2 vNdc;
+void main(){vec2 v[3]=vec2[3](vec2(-1,-1),vec2(3,-1),vec2(-1,3));
+  vNdc=v[gl_VertexID];gl_Position=vec4(vNdc,1.0,1.0);}`;
+const SKY_FS=`#version 300 es
+precision highp float;
+uniform vec3 uFwd,uRight,uUp,uSun,uSunCol,uHorizon,uZenith;
+uniform float uTanHalf,uAspect;
+in vec2 vNdc;out vec4 frag;
+${GLSL_COMMON}
+void main(){
+  vec3 dir=normalize(uFwd+vNdc.x*uTanHalf*uAspect*uRight+vNdc.y*uTanHalf*uUp);
+  vec3 col=dir.y>=0.0?mix(uHorizon,uZenith,pow(dir.y,0.5))
+    :mix(uHorizon*0.8,vec3(0.1,0.085,0.065),clamp(-dir.y*6.0,0.0,1.0));
+  float d=max(dot(dir,uSun),0.0);
+  col+=uSunCol*(pow(d,650.0)*2.8+pow(d,9.0)*0.3);
+  frag=vec4(pow(aces(col),vec3(1.0/2.2)),1.0);
+}`;
+
+const litProg=makeProgram(LIT_VS,LIT_FS);
+const waterProg=makeProgram(WATER_VS,WATER_FS);
+const shadowProg=makeProgram(SHADOW_VS,SHADOW_FS);
+const skyProg=makeProgram(SKY_VS,SKY_FS);
+const loc=(p,n)=>gl.getUniformLocation(p,n);
+const L={proj:loc(litProg,"uProj"),view:loc(litProg,"uView"),model:loc(litProg,"uModel"),
+  color:loc(litProg,"uColor"),emis:loc(litProg,"uEmissive"),eye:loc(litProg,"uEye"),
+  sun:loc(litProg,"uSun"),sunCol:loc(litProg,"uSunCol"),ambG:loc(litProg,"uAmbG"),
+  ambS:loc(litProg,"uAmbS"),horizon:loc(litProg,"uHorizon"),fogD:loc(litProg,"uFogD"),
+  lightMat:loc(litProg,"uLightMat"),shadow:loc(litProg,"uShadow")};
+const W={proj:loc(waterProg,"uProj"),view:loc(waterProg,"uView"),time:loc(waterProg,"uTime"),
+  eye:loc(waterProg,"uEye"),sun:loc(waterProg,"uSun"),sunCol:loc(waterProg,"uSunCol"),
+  horizon:loc(waterProg,"uHorizon"),zenith:loc(waterProg,"uZenith"),deep:loc(waterProg,"uDeep"),
+  fogD:loc(waterProg,"uFogD"),lightMat:loc(waterProg,"uLightMat"),shadow:loc(waterProg,"uShadow")};
+const SH={lightMat:loc(shadowProg,"uLightMat"),model:loc(shadowProg,"uModel")};
+const SK={fwd:loc(skyProg,"uFwd"),right:loc(skyProg,"uRight"),up:loc(skyProg,"uUp"),
+  sun:loc(skyProg,"uSun"),sunCol:loc(skyProg,"uSunCol"),horizon:loc(skyProg,"uHorizon"),
+  zenith:loc(skyProg,"uZenith"),tan:loc(skyProg,"uTanHalf"),aspect:loc(skyProg,"uAspect")};
+
+gl.enable(gl.DEPTH_TEST);
+
+function upload(mb){
+  const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+  const buf=(data,locIdx,size)=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(locIdx);gl.vertexAttribPointer(locIdx,size,gl.FLOAT,false,0,0);};
+  buf(mb.positions,0,3);buf(mb.normals,1,3);
+  if(mb.colors)buf(mb.colors,2,3);
+  const ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(mb.indices),gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return{vao,count:mb.indices.length,hasColor:!!mb.colors};
+}
+
+const meshes={
+  terrain:upload(buildTerrain()),water:upload(buildWater()),dam:upload(buildDam()),
+  stupa:upload(buildStupa()),boulders:upload(buildBoulders()),temple:upload(buildTemple()),
+  lamps:upload(buildLamps()),hull:upload(buildHull()),sail:upload(buildSail()),
+  boatman:upload(buildBoatman()),bowLamp:upload(buildLampBow()),
+  birdBody:upload(buildBirdBody()),wing:upload(buildWing()),
+};
+
+// shadow map
+const SRES=2048;
+const shadowTex=gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+gl.texStorage2D(gl.TEXTURE_2D,1,gl.DEPTH_COMPONENT24,SRES,SRES);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_COMPARE_MODE,gl.COMPARE_REF_TO_TEXTURE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_COMPARE_FUNC,gl.LEQUAL);
+const shadowFbo=gl.createFramebuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,shadowTex,0);
+gl.drawBuffers([gl.NONE]);gl.readBuffer(gl.NONE);
+gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+const skyVao=gl.createVertexArray();
+
+// ============================== timeline =================================
+const DUR=120;
+const zKeys=[[0,0],[10,25],[25,180],[40,330],[60,640],[75,900],[90,1100],[110,1380],[120,1418]];
+function boatZ(t){
+  for(let i=0;i<zKeys.length-1;i++){
+    const[a,az]=zKeys[i],[b,bz]=zKeys[i+1];
+    if(t<=b){const u=smooth(a,b,t)*0.4+clamp((t-a)/(b-a),0,1)*0.6;return lerp(az,bz,u);}
+  }
+  return zKeys[zKeys.length-1][1];
+}
+function boatState(t){
+  const z=boatZ(t),x=riverX(z);
+  const dz=2,dx=riverX(z+dz)-riverX(z-dz);
+  const yaw=Math.atan2(dx/(2*dz),1);
+  const rapids=smooth(58,64,t)*(1-smooth(73,78,t));
+  const bob=0.12*Math.sin(t*1.7)+0.08*Math.sin(t*2.9)+rapids*0.22*Math.sin(t*6.2);
+  const pitch=0.028*Math.sin(t*1.3)+rapids*0.09*Math.sin(t*5.1);
+  const roll=0.03*Math.sin(t*1.1+1)+rapids*0.1*Math.sin(t*4.3+2);
+  return{x,z,y:0.12+bob,yaw,pitch,roll,rapids};
+}
+
+// light/weather stops: dawn → day → golden → dusk
+const stops=[
+  {t:0,  sun:[0.85,0.16,0.35],sunCol:[1.35,0.62,0.38],hor:[0.92,0.5,0.32],zen:[0.16,0.17,0.3],
+   ambG:[0.16,0.12,0.12],ambS:[0.3,0.28,0.38],deep:[0.05,0.07,0.09],fog:0.0035},
+  {t:42, sun:[0.5,0.72,0.3], sunCol:[1.35,1.18,0.95],hor:[0.6,0.66,0.72],zen:[0.22,0.4,0.64],
+   ambG:[0.2,0.17,0.14],ambS:[0.42,0.48,0.58],deep:[0.05,0.1,0.1],fog:0.002},
+  {t:84, sun:[-0.5,0.3,0.28],sunCol:[1.5,0.85,0.42],hor:[0.95,0.5,0.22],zen:[0.15,0.19,0.36],
+   ambG:[0.2,0.14,0.1],ambS:[0.36,0.34,0.46],deep:[0.06,0.06,0.07],fog:0.0028},
+  {t:104,sun:[-0.6,0.14,0.24],sunCol:[1.0,0.44,0.3], hor:[0.6,0.28,0.28],zen:[0.06,0.07,0.17],
+   ambG:[0.1,0.08,0.09],ambS:[0.2,0.18,0.3],deep:[0.03,0.035,0.05],fog:0.0032},
+  {t:120,sun:[-0.62,0.1,0.22],sunCol:[0.7,0.3,0.22], hor:[0.42,0.2,0.24],zen:[0.035,0.04,0.12],
+   ambG:[0.07,0.06,0.08],ambS:[0.13,0.12,0.22],deep:[0.02,0.025,0.04],fog:0.0038},
+];
+function weather(t){
+  let a=stops[0],b=stops[stops.length-1];
+  for(let i=0;i<stops.length-1;i++)if(t>=stops[i].t&&t<=stops[i+1].t){a=stops[i];b=stops[i+1];break;}
+  const u=smooth(a.t,b.t,t);
+  return{sun:norm3(lerp3(a.sun,b.sun,u)),sunCol:lerp3(a.sunCol,b.sunCol,u),
+    hor:lerp3(a.hor,b.hor,u),zen:lerp3(a.zen,b.zen,u),ambG:lerp3(a.ambG,b.ambG,u),
+    ambS:lerp3(a.ambS,b.ambS,u),deep:lerp3(a.deep,b.deep,u),fog:lerp(a.fog,b.fog,u),
+    lamp:smooth(85,100,t)};
+}
+
+// camera shots
+function shake(t,amp){return[amp*Math.sin(t*13.7),amp*0.6*Math.sin(t*17.3+2),amp*Math.sin(t*11.1+4)];}
+const shots=[
+  {t0:0,t1:12,cam:(ts,B)=>({eye:[B.x+34,10,B.z+44-ts*0.6],look:[B.x-6,6,B.z-34]})},
+  {t0:12,t1:25,cam:(ts,B)=>({eye:[B.x+12,2.4,B.z+10],look:[B.x-1,1.2,B.z-3]})},
+  {t0:25,t1:40,cam:(ts,B)=>({eye:[B.x-14,5,B.z-18],
+    look:lerp3([B.x,2,B.z],[riverX(300)+40,5,300],0.5)})},
+  {t0:40,t1:60,cam:(ts,B)=>({eye:[B.x-6+4*Math.sin(ts*0.15),24-ts*0.55,B.z-30],look:[B.x,3,B.z+42]})},
+  {t0:60,t1:75,cam:(ts,B)=>({eye:add3([B.x+14,3.8,B.z+16],shake(ts,0.2*B.rapids)),
+    look:[B.x-1,1.4,B.z]})},
+  {t0:75,t1:90,cam:(ts,B)=>({eye:[B.x-9,1.6+ts*0.8,B.z+15],look:[B.x,2+ts*0.1,B.z-5]})},
+  {t0:90,t1:110,cam:(ts,B)=>({eye:[B.x-16,4.2,B.z-20],
+    look:lerp3([B.x,2.5,B.z+8],[TEMPLE.x,9,TEMPLE.z],0.5)})},
+  {t0:110,t1:121,cam:()=>({eye:[riverX(1400)-44,15,1330],look:[TEMPLE.x-4,11,TEMPLE.z-6]})},
+];
+function camera(t){
+  const B=boatState(t);
+  for(const s of shots)if(t>=s.t0&&t<s.t1){
+    const c=s.cam(t-s.t0,B);
+    const h=terrainH(c.eye[0],c.eye[2]);
+    c.eye=[c.eye[0],Math.max(c.eye[1],h+1.4,0.9),c.eye[2]];
+    return c;
+  }
+  return shots[shots.length-1].cam(0,B);
+}
+
+const cards=[
+  {t0:4,t1:11,text:'కృష్ణవేణి — <b>Krishnaveni</b>'},
+  {t0:13,t1:23,text:'Nagarjuna Sagar. Before the sun, Veeranna unties his grandfather’s boat.'},
+  {t0:27,t1:37,text:'Past the drowned city of the Buddha…'},
+  {t0:43,t1:56,text:'…into the Nallamala, where the river remembers being wild.'},
+  {t0:62,t1:72,text:'The gorge tests every boat it lets through.'},
+  {t0:78,t1:87,text:'And rewards the ones that hold.'},
+  {t0:93,t1:106,text:'Srisailam. Mallikarjuna’s lamp above the water.'},
+  {t0:112,t1:119,text:'Some journeys go against the current.<br>Those are the ones worth telling.'},
+];
+
+// ============================== audio ====================================
+let AC=null,master=null,riverGain=null,droneGain=null;
+function initAudio(){
+  if(AC)return;
+  AC=new(window.AudioContext||window.webkitAudioContext)();
+  master=AC.createGain();master.gain.value=0.9;master.connect(AC.destination);
+  // river: looped noise through lowpass
+  const len=AC.sampleRate*2,nb=AC.createBuffer(1,len,AC.sampleRate),d=nb.getChannelData(0);
+  let last=0;for(let i=0;i<len;i++){const w=Math.random()*2-1;last=(last+0.02*w)/1.02;d[i]=last*3.5;}
+  const src=AC.createBufferSource();src.buffer=nb;src.loop=true;
+  const lp=AC.createBiquadFilter();lp.type="lowpass";lp.frequency.value=420;
+  riverGain=AC.createGain();riverGain.gain.value=0.1;
+  src.connect(lp).connect(riverGain).connect(master);src.start();
+  // tanpura-ish drone: A2 + E3, slow detune
+  droneGain=AC.createGain();droneGain.gain.value=0.045;droneGain.connect(master);
+  for(const[f,g]of[[110,1],[164.8,0.6],[220,0.25]]){
+    const o=AC.createOscillator();o.type="triangle";o.frequency.value=f;
+    const og=AC.createGain();og.gain.value=g*0.5;
+    const lfo=AC.createOscillator();lfo.frequency.value=0.1+f*0.0003;
+    const lg=AC.createGain();lg.gain.value=0.6;
+    lfo.connect(lg).connect(o.detune);lfo.start();
+    o.connect(og).connect(droneGain);o.start();
+  }
+}
+function bell(){
+  if(!AC)return;
+  const t=AC.currentTime;
+  for(const[f,g,dur]of[[523,0.16,3.2],[784,0.07,2.2],[1046,0.035,1.4]]){
+    const o=AC.createOscillator();o.frequency.value=f;
+    const og=AC.createGain();
+    og.gain.setValueAtTime(g,t);og.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(og).connect(master);o.start(t);o.stop(t+dur);
+  }
+}
+function chirp(){
+  if(!AC)return;
+  const t=AC.currentTime,o=AC.createOscillator(),og=AC.createGain();
+  o.frequency.setValueAtTime(2300+Math.random()*500,t);
+  o.frequency.exponentialRampToValueAtTime(1600,t+0.12);
+  og.gain.setValueAtTime(0.028,t);og.gain.exponentialRampToValueAtTime(0.0001,t+0.14);
+  o.connect(og).connect(master);o.start(t);o.stop(t+0.15);
+}
+const bellCues=[92.5,97.5,103.5];
+let nextChirp=26;
+function audioFrame(t,dt){
+  if(!AC)return;
+  const rapids=smooth(58,64,t)*(1-smooth(73,78,t));
+  riverGain.gain.value=0.1+0.13*rapids;
+  droneGain.gain.value=(0.045+0.03*rapids)*(1-smooth(114,119,t));
+  master.gain.value=0.9*(1-smooth(116,120,t));
+  if(t>25&&t<58&&t>nextChirp){chirp();nextChirp=t+1.5+Math.random()*3;}
+}
+
+// ============================== playback =================================
+const overlay=document.getElementById("overlay");
+const playBtn=document.getElementById("play");
+const scrub=document.getElementById("scrub");
+const clock=document.getElementById("clock");
+const cardEl=document.getElementById("card");
+const fadeEl=document.getElementById("fade");
+
+const urlT=new URLSearchParams(location.search).get("t");
+let playing=false,t=urlT?parseFloat(urlT):0,prevT=t;
+if(urlT!==null)overlay.classList.add("hidden");
+
+playBtn.addEventListener("click",()=>{
+  initAudio();AC.resume();
+  if(t>=DUR-0.1){t=0;nextChirp=26;}
+  playing=true;
+  overlay.classList.add("hidden");
+});
+scrub.addEventListener("input",()=>{t=parseFloat(scrub.value);prevT=t;nextChirp=Math.max(26,t);});
+document.addEventListener("visibilitychange",()=>{
+  if(AC)document.hidden?AC.suspend():AC.resume();
+});
+
+function resize(){
+  const dpr=Math.min(devicePixelRatio||1,2);
+  canvas.width=Math.round(innerWidth*dpr);canvas.height=Math.round(innerHeight*dpr);
+}
+addEventListener("resize",resize);resize();
+
+// ============================== render ===================================
+function drawList(t,B){
+  const boatM=compose([B.x,B.y,B.z],B.yaw,B.pitch,B.roll);
+  const flutter=compose([0,0,0],0,0,0.05*Math.sin(t*2.2)+0.03*Math.sin(t*5.7));
+  const list=[
+    {m:meshes.terrain,model:IDENT,color:[1,1,1,1],emis:0,cast:true},
+    {m:meshes.dam,model:IDENT,color:[0.52,0.5,0.47,1],emis:0,cast:true},
+    {m:meshes.stupa,model:IDENT,color:[0.78,0.72,0.6,1],emis:0,cast:true},
+    {m:meshes.boulders,model:IDENT,color:[0.4,0.33,0.27,1],emis:0,cast:true},
+    {m:meshes.temple,model:IDENT,color:[0.82,0.7,0.5,1],emis:0,cast:true},
+    {m:meshes.lamps,model:IDENT,color:[1,0.55,0.16,1],emis:1.6+1.8*weather(t).lamp,cast:false},
+    {m:meshes.hull,model:boatM,color:[0.36,0.24,0.14,1],emis:0,cast:true},
+    {m:meshes.sail,model:mul4(boatM,flutter),color:[0.72,0.6,0.42,1],emis:0,cast:true},
+    {m:meshes.boatman,model:boatM,color:[0.3,0.2,0.15,1],emis:0,cast:true},
+    {m:meshes.bowLamp,model:boatM,color:[1,0.62,0.22,1],emis:2+3*weather(t).lamp,cast:false},
+  ];
+  // birds circle ahead of the boat during the middle acts
+  const birdOn=smooth(24,30,t)*(1-smooth(100,108,t));
+  if(birdOn>0.01){
+    for(let k=0;k<4;k++){
+      const w=0.35+k*0.06,ph=k*1.9;
+      const bx=B.x+Math.cos(t*w+ph)*(16+k*4),bz=B.z+55+Math.sin(t*w+ph)*(22+k*5);
+      const by=11+k*2.2+2.2*Math.sin(t*0.8+ph);
+      const head=Math.atan2(-Math.sin(t*w+ph),Math.cos(t*w+ph));
+      const bm=compose([bx,by,bz],head);
+      const flap=Math.sin(t*8.5+ph)*0.55;
+      list.push({m:meshes.birdBody,model:bm,color:[0.1,0.09,0.09,1],emis:0,cast:false});
+      list.push({m:meshes.wing,model:mul4(bm,compose([0,0,0],0,0,flap)),color:[0.1,0.09,0.09,1],emis:0,cast:false});
+      list.push({m:meshes.wing,model:mul4(bm,compose([0,0,0],Math.PI,0,-flap)),color:[0.1,0.09,0.09,1],emis:0,cast:false});
+    }
+  }
+  return list;
+}
+
+let wallLast=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt=Math.min((now-wallLast)/1000,0.05);wallLast=now;
+  if(playing){
+    prevT=t;t+=dt;
+    for(const cue of bellCues)if(prevT<cue&&t>=cue)bell();
+    audioFrame(t,dt);
+    if(t>=DUR){t=DUR;playing=false;
+      overlay.classList.remove("hidden");
+      playBtn.innerHTML="&#8635;";playBtn.setAttribute("aria-label","replay");
+    }
+  }
+  scrub.value=t;
+  const m=Math.floor(t/60),s=Math.floor(t%60);
+  clock.textContent=`${m}:${String(s).padStart(2,"0")} / 2:00`;
+
+  // title cards + end fade
+  let cardText="",cardOn=0;
+  for(const c of cards)if(t>=c.t0-1&&t<=c.t1+1){
+    cardText=c.text;
+    cardOn=smooth(c.t0-1,c.t0,t)*(1-smooth(c.t1,c.t1+1,t));
+  }
+  if(cardEl.innerHTML!==cardText&&cardText)cardEl.innerHTML=cardText;
+  cardEl.style.opacity=cardOn;
+  fadeEl.style.opacity=smooth(117.5,120,t)+(1-smooth(0,2.5,t));
+
+  const B=boatState(t),wx=weather(t),cam=camera(t);
+  const list=drawList(t,B);
+
+  // light matrix follows the boat
+  const sunShadow=norm3([wx.sun[0],Math.max(wx.sun[1],0.18),wx.sun[2]]);
+  const lEye=add3([B.x,0,B.z],scale3(sunShadow,320));
+  const R=150;
+  const lightMat=mul4(ortho(-R,R,-R,R,1,700),lookAt(lEye,[B.x,0,B.z]));
+
+  // shadow pass
+  gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFbo);
+  gl.viewport(0,0,SRES,SRES);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(2,4);
+  gl.useProgram(shadowProg);
+  gl.uniformMatrix4fv(SH.lightMat,false,lightMat);
+  for(const d of list)if(d.cast){
+    gl.uniformMatrix4fv(SH.model,false,d.model);
+    gl.bindVertexArray(d.m.vao);
+    gl.drawElements(gl.TRIANGLES,d.m.count,gl.UNSIGNED_INT,0);
+  }
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+
+  // main pass
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,canvas.width,canvas.height);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  const aspect=canvas.width/canvas.height;
+  const proj=perspective(0.9,aspect,0.2,1600);
+  const view=lookAt(cam.eye,cam.look);
+
+  // sky
+  const fwd=norm3(sub3(cam.look,cam.eye));
+  const right=norm3(cross3(fwd,[0,1,0]));
+  const up=cross3(right,fwd);
+  gl.disable(gl.DEPTH_TEST);gl.depthMask(false);
+  gl.useProgram(skyProg);
+  gl.uniform3fv(SK.fwd,fwd);gl.uniform3fv(SK.right,right);gl.uniform3fv(SK.up,up);
+  gl.uniform3fv(SK.sun,wx.sun);gl.uniform3fv(SK.sunCol,wx.sunCol);
+  gl.uniform3fv(SK.horizon,wx.hor);gl.uniform3fv(SK.zenith,wx.zen);
+  gl.uniform1f(SK.tan,Math.tan(0.45));gl.uniform1f(SK.aspect,aspect);
+  gl.bindVertexArray(skyVao);gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.depthMask(true);gl.enable(gl.DEPTH_TEST);
+
+  // lit geometry
+  gl.useProgram(litProg);
+  gl.uniformMatrix4fv(L.proj,false,proj);gl.uniformMatrix4fv(L.view,false,view);
+  gl.uniformMatrix4fv(L.lightMat,false,lightMat);
+  gl.uniform3fv(L.eye,cam.eye);gl.uniform3fv(L.sun,wx.sun);gl.uniform3fv(L.sunCol,wx.sunCol);
+  gl.uniform3fv(L.ambG,wx.ambG);gl.uniform3fv(L.ambS,wx.ambS);
+  gl.uniform3fv(L.horizon,wx.hor);gl.uniform1f(L.fogD,wx.fog);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+  gl.uniform1i(L.shadow,0);
+  for(const d of list){
+    gl.uniformMatrix4fv(L.model,false,d.model);
+    gl.uniform4fv(L.color,d.color);
+    gl.uniform1f(L.emis,d.emis);
+    if(!d.m.hasColor)gl.vertexAttrib3f(2,1,1,1);
+    gl.bindVertexArray(d.m.vao);
+    gl.drawElements(gl.TRIANGLES,d.m.count,gl.UNSIGNED_INT,0);
+  }
+
+  // water
+  gl.useProgram(waterProg);
+  gl.uniformMatrix4fv(W.proj,false,proj);gl.uniformMatrix4fv(W.view,false,view);
+  gl.uniformMatrix4fv(W.lightMat,false,lightMat);
+  gl.uniform1f(W.time,t);gl.uniform3fv(W.eye,cam.eye);
+  gl.uniform3fv(W.sun,wx.sun);gl.uniform3fv(W.sunCol,wx.sunCol);
+  gl.uniform3fv(W.horizon,wx.hor);gl.uniform3fv(W.zenith,wx.zen);
+  gl.uniform3fv(W.deep,wx.deep);gl.uniform1f(W.fogD,wx.fog);
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,shadowTex);
+  gl.uniform1i(W.shadow,0);
+  gl.bindVertexArray(meshes.water.vao);
+  gl.drawElements(gl.TRIANGLES,meshes.water.count,gl.UNSIGNED_INT,0);
+  gl.bindVertexArray(null);
+}
+requestAnimationFrame(frame);
+</script>
