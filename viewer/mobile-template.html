@@ -1,0 +1,435 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Thoranam Viewer</title>
+<style>
+  :root {
+    --ground: #14110c;
+    --ink: #e8dcc3;
+    --brass: #c99a3d;
+    --muted: #8a7b65;
+    --line: rgba(232, 220, 195, 0.15);
+    --chip: rgba(20, 17, 12, 0.78);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ground); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  #identity { position: fixed; top: max(12px, env(safe-area-inset-top)); left: 12px;
+    background: var(--chip); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px 11px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    max-width: min(78vw, 340px); }
+  #identity .eyebrow { font-size: 10px; letter-spacing: 0.22em; color: var(--brass);
+    text-transform: uppercase; margin: 0 0 3px; }
+  #identity h1 { margin: 0; font: 600 17px/1.25 "Iowan Old Style", Palatino, Georgia, serif;
+    text-wrap: balance; }
+  #identity .stats { margin: 5px 0 0; font: 11px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  #bar { position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: max(14px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 8px;
+    background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 6px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  #bar button, #bar label { appearance: none; border: 0; background: transparent; color: var(--muted);
+    font: 600 13px/1 system-ui, sans-serif; padding: 9px 16px; border-radius: 999px; cursor: pointer; }
+  #bar button.active { background: var(--brass); color: #201808; }
+  #bar button:focus-visible, #bar label:focus-within { outline: 2px solid var(--brass); outline-offset: 2px; }
+  #bar .divider { width: 1px; align-self: stretch; background: var(--line); }
+  #file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+  #hint { position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(max(14px, env(safe-area-inset-bottom)) + 58px);
+    color: var(--muted); font-size: 12px; letter-spacing: 0.02em; text-align: center;
+    transition: opacity 0.6s; pointer-events: none; padding: 0 20px; }
+  #hint.faded { opacity: 0; }
+
+  #stick { position: fixed; width: 108px; height: 108px; border: 1px solid var(--line);
+    border-radius: 50%; background: rgba(232, 220, 195, 0.05); display: none; pointer-events: none;
+    transform: translate(-50%, -50%); }
+  #knob { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(201, 154, 61, 0.8); transform: translate(-50%, -50%); }
+
+  #fatal { position: fixed; inset: 0; display: none; place-items: center; padding: 24px;
+    text-align: center; background: var(--ground); }
+</style>
+
+<canvas id="gl"></canvas>
+
+<header id="identity">
+  <p class="eyebrow">Thoranam &middot; Scene Viewer</p>
+  <h1 id="scene-name">__SCENE_NAME__</h1>
+  <p class="stats" id="stats">loading&hellip;</p>
+</header>
+
+<div id="stick"><div id="knob"></div></div>
+<p id="hint">Drag to orbit &middot; pinch to zoom &middot; two fingers to pan</p>
+
+<nav id="bar">
+  <button id="mode-orbit" class="active" type="button">Orbit</button>
+  <button id="mode-walk" type="button">Walk</button>
+  <span class="divider"></span>
+  <label for="file">Load .glb</label>
+  <input id="file" type="file" accept=".glb,model/gltf-binary" />
+</nav>
+
+<div id="fatal"><p id="fatal-msg"></p></div>
+
+<script>
+"use strict";
+const GLB_BASE64 = "__GLB_BASE64__";
+
+// ---------- tiny vector / matrix kit (column-major, WebGL layout) ----------
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const add3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const scale3 = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm3 = (a) => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+function perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
+}
+function lookAt(eye, center, up = [0, 1, 0]) {
+  const z = norm3(sub3(eye, center));
+  const x = norm3(cross3(up, z));
+  const y = cross3(z, x);
+  return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0,
+    -dot3(x, eye), -dot3(y, eye), -dot3(z, eye), 1];
+}
+
+// ---------- GLB parsing (positions, normals, indices, base color) ----------
+function parseGLB(buf) {
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0x46546c67) throw new Error("not a GLB file");
+  const jsonLen = dv.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen)));
+  const bin = new Uint8Array(buf, 20 + jsonLen + 8);
+  const accessor = (i) => {
+    const acc = json.accessors[i];
+    const view = json.bufferViews[acc.bufferView];
+    const offset = bin.byteOffset + (view.byteOffset || 0) + (acc.byteOffset || 0);
+    const comps = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[acc.type];
+    const Ctor = { 5126: Float32Array, 5125: Uint32Array, 5123: Uint16Array }[acc.componentType];
+    return { array: new Ctor(bin.buffer, offset, acc.count * comps), acc };
+  };
+
+  const prims = [];
+  const bboxMin = [Infinity, Infinity, Infinity];
+  const bboxMax = [-Infinity, -Infinity, -Infinity];
+  for (const mesh of json.meshes) {
+    for (const prim of mesh.primitives) {
+      const pos = accessor(prim.attributes.POSITION);
+      const nor = accessor(prim.attributes.NORMAL);
+      const idx = accessor(prim.indices);
+      const mat = json.materials?.[prim.material];
+      const color = mat?.pbrMetallicRoughness?.baseColorFactor ?? [0.7, 0.7, 0.7, 1];
+      for (let k = 0; k < 3; k++) {
+        bboxMin[k] = Math.min(bboxMin[k], pos.acc.min[k]);
+        bboxMax[k] = Math.max(bboxMax[k], pos.acc.max[k]);
+      }
+      prims.push({ pos: pos.array, nor: nor.array, idx: idx.array,
+        idxType: idx.acc.componentType, color });
+    }
+  }
+  const tris = prims.reduce((n, p) => n + p.idx.length / 3, 0);
+  return { prims, bboxMin, bboxMax, tris, name: json.scenes?.[0]?.name };
+}
+
+// ---------- renderer ----------
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl2", { antialias: true });
+if (!gl) {
+  document.getElementById("fatal").style.display = "grid";
+  document.getElementById("fatal-msg").textContent =
+    "This browser doesn't support WebGL2. Try Chrome or Samsung Internet.";
+  throw new Error("no webgl2");
+}
+
+const VS = `#version 300 es
+uniform mat4 uProj, uView;
+in vec3 aPos; in vec3 aNormal;
+out vec3 vNormal; out vec3 vWorld;
+void main() { vNormal = aNormal; vWorld = aPos; gl_Position = uProj * uView * vec4(aPos, 1.0); }`;
+
+const FS = `#version 300 es
+precision highp float;
+uniform vec4 uColor; uniform vec3 uEye;
+in vec3 vNormal; in vec3 vWorld;
+out vec4 frag;
+void main() {
+  vec3 n = normalize(vNormal);
+  vec3 sunDir = normalize(vec3(0.45, 0.8, 0.3));
+  float sun = max(dot(n, sunDir), 0.0);
+  float hemi = 0.5 + 0.5 * n.y;
+  vec3 ambient = mix(vec3(0.30, 0.24, 0.19), vec3(0.95, 0.88, 0.74), hemi) * 0.5;
+  vec3 col = uColor.rgb * (ambient + sun * vec3(1.05, 0.92, 0.74));
+  col = pow(col, vec3(1.0 / 2.2));
+  float fog = 1.0 - exp(-distance(vWorld, uEye) * 0.010);
+  col = mix(col, vec3(0.078, 0.067, 0.047), fog);
+  frag = vec4(col, 1.0);
+}`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const program = gl.createProgram();
+gl.attachShader(program, compile(gl.VERTEX_SHADER, VS));
+gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+gl.useProgram(program);
+const U = {
+  proj: gl.getUniformLocation(program, "uProj"),
+  view: gl.getUniformLocation(program, "uView"),
+  color: gl.getUniformLocation(program, "uColor"),
+  eye: gl.getUniformLocation(program, "uEye"),
+};
+gl.enable(gl.DEPTH_TEST);
+gl.clearColor(0.078, 0.067, 0.047, 1);
+
+let scene = null; // { draws: [{vao, count, idxType, color}], center, size, bboxMin, bboxMax }
+
+function loadScene(buf, label) {
+  const parsed = parseGLB(buf);
+  if (scene) for (const d of scene.draws) gl.deleteVertexArray(d.vao);
+  const draws = parsed.prims.map((p) => {
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    const attach = (data, loc) => {
+      const b = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, b);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+    };
+    attach(p.pos, gl.getAttribLocation(program, "aPos"));
+    attach(p.nor, gl.getAttribLocation(program, "aNormal"));
+    const ib = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, p.idx, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    return { vao, count: p.idx.length, color: p.color,
+      glType: p.idxType === 5125 ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT };
+  });
+  const center = scale3(add3(parsed.bboxMin, parsed.bboxMax), 0.5);
+  const size = Math.hypot(...sub3(parsed.bboxMax, parsed.bboxMin));
+  scene = { draws, center, size, bboxMin: parsed.bboxMin, bboxMax: parsed.bboxMax };
+
+  orbit.target = [...center];
+  orbit.dist = size * 0.85;
+  orbit.yaw = 0.7;
+  orbit.pitch = 0.45;
+  resetWalk();
+
+  document.getElementById("stats").textContent =
+    `${draws.length} meshes · ${parsed.tris.toLocaleString()} triangles`;
+  if (label) document.getElementById("scene-name").textContent = label;
+  else if (parsed.name) document.getElementById("scene-name").textContent = parsed.name;
+}
+
+// ---------- camera state ----------
+const orbit = { yaw: 0.7, pitch: 0.45, dist: 40, target: [15, 2, 15] };
+const walk = { pos: [15, 1.6, 40], yaw: Math.PI, pitch: 0, keys: {}, joy: null };
+let mode = "orbit";
+let autoRotate = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function resetWalk() {
+  if (!scene) return;
+  walk.pos = [scene.center[0], 1.6, scene.bboxMax[2] + scene.size * 0.12];
+  walk.yaw = 0; // dir = [sin(yaw), 0, -cos(yaw)] → yaw 0 faces -z, toward the structure
+  walk.pitch = 0.02;
+}
+function walkDir() {
+  return [Math.cos(walk.pitch) * Math.sin(walk.yaw), Math.sin(walk.pitch),
+    -Math.cos(walk.pitch) * Math.cos(walk.yaw)];
+}
+
+// ---------- input ----------
+const pointers = new Map();
+const hint = document.getElementById("hint");
+const stick = document.getElementById("stick");
+const knob = document.getElementById("knob");
+let hintTimer = setTimeout(() => hint.classList.add("faded"), 5000);
+
+function fadeHint() { clearTimeout(hintTimer); hint.classList.add("faded"); }
+
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  autoRotate = false;
+  fadeHint();
+  const p = { x: e.clientX, y: e.clientY, role: "look" };
+  if (mode === "walk" && walk.joy === null && e.clientX < innerWidth * 0.45) {
+    p.role = "joy";
+    walk.joy = { id: e.pointerId, ox: e.clientX, oy: e.clientY, dx: 0, dy: 0 };
+    stick.style.display = "block";
+    stick.style.left = e.clientX + "px";
+    stick.style.top = e.clientY + "px";
+  }
+  pointers.set(e.pointerId, p);
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+
+  if (mode === "walk") {
+    if (p.role === "joy" && walk.joy) {
+      walk.joy.dx = clamp(e.clientX - walk.joy.ox, -54, 54);
+      walk.joy.dy = clamp(e.clientY - walk.joy.oy, -54, 54);
+      knob.style.transform = `translate(calc(-50% + ${walk.joy.dx}px), calc(-50% + ${walk.joy.dy}px))`;
+    } else {
+      walk.yaw += (e.clientX - p.x) * 0.005;
+      walk.pitch = clamp(walk.pitch - (e.clientY - p.y) * 0.005, -1.2, 1.2);
+    }
+    p.x = e.clientX; p.y = e.clientY;
+    return;
+  }
+
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const before = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    p.x = e.clientX; p.y = e.clientY;
+    const after = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    if (after.d > 1) orbit.dist = clamp(orbit.dist * before.d / after.d, 2, (scene?.size ?? 50) * 4);
+    const eye = orbitEye();
+    const fwd = norm3(sub3(orbit.target, eye));
+    const right = norm3(cross3(fwd, [0, 1, 0]));
+    const up = cross3(right, fwd);
+    const k = orbit.dist * 0.0013;
+    orbit.target = add3(orbit.target,
+      add3(scale3(right, -(after.mx - before.mx) * k), scale3(up, (after.my - before.my) * k)));
+  } else {
+    orbit.yaw -= (e.clientX - p.x) * 0.006;
+    orbit.pitch = clamp(orbit.pitch + (e.clientY - p.y) * 0.006, -0.05, 1.45);
+    p.x = e.clientX; p.y = e.clientY;
+  }
+});
+
+function releasePointer(e) {
+  const p = pointers.get(e.pointerId);
+  if (p?.role === "joy") {
+    walk.joy = null;
+    stick.style.display = "none";
+    knob.style.transform = "translate(-50%, -50%)";
+  }
+  pointers.delete(e.pointerId);
+}
+canvas.addEventListener("pointerup", releasePointer);
+canvas.addEventListener("pointercancel", releasePointer);
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  autoRotate = false;
+  if (mode === "orbit") orbit.dist = clamp(orbit.dist * Math.exp(e.deltaY * 0.001), 2, (scene?.size ?? 50) * 4);
+}, { passive: false });
+
+addEventListener("keydown", (e) => { walk.keys[e.key.toLowerCase()] = true; autoRotate = false; });
+addEventListener("keyup", (e) => { walk.keys[e.key.toLowerCase()] = false; });
+
+// ---------- mode switch / file load ----------
+const btnOrbit = document.getElementById("mode-orbit");
+const btnWalk = document.getElementById("mode-walk");
+function setMode(m) {
+  mode = m;
+  btnOrbit.classList.toggle("active", m === "orbit");
+  btnWalk.classList.toggle("active", m === "walk");
+  hint.textContent = m === "walk"
+    ? "Left thumb: move · right thumb: look · (or WASD + drag)"
+    : "Drag to orbit · pinch to zoom · two fingers to pan";
+  hint.classList.remove("faded");
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => hint.classList.add("faded"), 5000);
+  if (m === "walk") resetWalk();
+}
+btnOrbit.addEventListener("click", () => setMode("orbit"));
+btnWalk.addEventListener("click", () => setMode("walk"));
+
+document.getElementById("file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    loadScene(await file.arrayBuffer(), file.name.replace(/\.glb$/i, ""));
+    setMode("orbit");
+  } catch (err) {
+    document.getElementById("stats").textContent = `couldn't load: ${err.message}`;
+  }
+});
+
+// ---------- resize + main loop ----------
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = Math.round(innerWidth * dpr);
+  canvas.height = Math.round(innerHeight * dpr);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+addEventListener("resize", resize);
+resize();
+
+function orbitEye() {
+  return add3(orbit.target, [
+    orbit.dist * Math.cos(orbit.pitch) * Math.sin(orbit.yaw),
+    orbit.dist * Math.sin(orbit.pitch),
+    orbit.dist * Math.cos(orbit.pitch) * Math.cos(orbit.yaw),
+  ]);
+}
+
+let lastT = performance.now();
+function frame(t) {
+  requestAnimationFrame(frame);
+  const dt = Math.min((t - lastT) / 1000, 0.05);
+  lastT = t;
+  if (!scene) return;
+
+  if (mode === "orbit" && autoRotate) orbit.yaw += dt * 0.12;
+
+  if (mode === "walk") {
+    let f = 0, s = 0;
+    if (walk.joy) { f = -walk.joy.dy / 54; s = walk.joy.dx / 54; }
+    if (walk.keys.w || walk.keys.arrowup) f += 1;
+    if (walk.keys.s || walk.keys.arrowdown) f -= 1;
+    if (walk.keys.a || walk.keys.arrowleft) s -= 1;
+    if (walk.keys.d || walk.keys.arrowright) s += 1;
+    const fwd = [Math.sin(walk.yaw), 0, -Math.cos(walk.yaw)];
+    const right = [Math.cos(walk.yaw), 0, Math.sin(walk.yaw)];
+    const speed = 4.2;
+    walk.pos = add3(walk.pos, scale3(fwd, f * speed * dt));
+    walk.pos = add3(walk.pos, scale3(right, s * speed * dt));
+    const pad = scene.size * 0.5;
+    walk.pos[0] = clamp(walk.pos[0], scene.bboxMin[0] - pad, scene.bboxMax[0] + pad);
+    walk.pos[2] = clamp(walk.pos[2], scene.bboxMin[2] - pad, scene.bboxMax[2] + pad);
+    walk.pos[1] = 1.6;
+  }
+
+  const eye = mode === "walk" ? walk.pos : orbitEye();
+  const center = mode === "walk" ? add3(walk.pos, walkDir()) : orbit.target;
+  const far = Math.max(200, (scene.size || 50) * 8);
+  gl.uniformMatrix4fv(U.proj, false, perspective(1.0, canvas.width / canvas.height, 0.1, far));
+  gl.uniformMatrix4fv(U.view, false, lookAt(eye, center));
+  gl.uniform3fv(U.eye, eye);
+
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  for (const d of scene.draws) {
+    gl.uniform4fv(U.color, d.color);
+    gl.bindVertexArray(d.vao);
+    gl.drawElements(gl.TRIANGLES, d.count, d.glType, 0);
+  }
+  gl.bindVertexArray(null);
+}
+
+// ---------- boot ----------
+try {
+  const raw = atob(GLB_BASE64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  loadScene(bytes.buffer);
+} catch (err) {
+  document.getElementById("stats").textContent = `scene failed: ${err.message}`;
+}
+requestAnimationFrame(frame);
+</script>
